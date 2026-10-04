@@ -528,6 +528,7 @@ function stubEnvironment(on: On, isLinked: boolean, variables: Readonly<Record<s
   on('fs.read', (_, e) => ({
     value: e.as === 'bytes' ? { base64: PNG } : JSON.stringify({ providers: [{ id: 'github' }] }),
   }))
+  on('fs.exists', () => ({ value: false }))
   on('process.run', (_, e) => {
     calls.push([...e.argv])
     return {
@@ -950,3 +951,91 @@ for (const surface of SURFACES) {
     })
   })
 }
+
+// Small lossless synthetic packets exercise the actual terminal hook adapter.
+const PACKED_NO_CONFIG_KEY = "eNrtwzENAAAIAzAwh389uyYBA23S7E1UVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV9VmLxWpP"
+const PACKED_NO_CONFIG_DELTA = "eNrtwzENAAAIA7ALAQv+le5BAgbapJluVFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVfV5qjUmgA=="
+const PACKED_NO_CONFIG_HASHES = ["f29f2533889455c00d9a3b2b0151023247a69e9459131648f325a1531219a2f1", "e2133e5457b3167949881cbadafb444d8688728362eee9c4df7e72264b9f3a52", "fd90d3a4874e84865e5bb59dfc29e2a923fb9c5c3fdae5942a063ef90d259579", "6a1fa69dfff71422954a487f1a1035db167c11306efc49fcdf921f5e60b640b5", "b4491e01b15eda54343cb1199672d6d09eed9f2fbb1d5c772bbbddbe3bf77620", "f458cf00cc7bd1d21ac9b916e4c06d614004d4b645fa22f3d1fed0bcdc1f995e"]
+
+function packedNoConfigBundle(on: On, malformed = false) {
+  const reads: string[] = []
+  on('fs.exists', { path: /\/assets\/buddy-codec\/index\.json$/ }, () => ({ value: true }))
+  on('fs.read', { path: /\/assets\/buddy-codec\/noConfig\/0000\.json$/ }, (_, e) => {
+    reads.push(e.path)
+    return { value: malformed ? '{' : JSON.stringify({
+      format: 'sth-rgba-delta-v1', sequence: 'noConfig', width: 384, height: 384, firstFrame: 0,
+      frames: Array.from({ length: 6 }, (_, frame) => ({
+        frame, kind: frame === 0 ? 'key' : 'delta',
+        data: frame === 0 ? PACKED_NO_CONFIG_KEY : PACKED_NO_CONFIG_DELTA,
+        sha256: PACKED_NO_CONFIG_HASHES[frame],
+      })),
+    }) }
+  })
+  return reads
+}
+
+async function expectPackedNoConfig(source: unknown, frame: number) {
+  if (typeof source !== 'object' || source === null || !('rgba' in source) || typeof source.rgba !== 'string') {
+    throw new Error('The release bundle must reach Image and blit as decoded RGBA')
+  }
+  expect(source).toMatchObject({ width: 384, height: 384 })
+  expect(source).not.toHaveProperty('file')
+  const bytes = Uint8Array.from(atob(source.rgba), character => character.charCodeAt(0))
+  expect(bytes.length).toBe(384 * 384 * 4)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  const hex = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('')
+  expect(hex).toBe(PACKED_NO_CONFIG_HASHES[frame])
+}
+
+describe('Buddy packed-bundle terminal integration', () => {
+  test('the real hook decodes a packed initial Image and exact 20 fps blits', async ($, on) => {
+    const reads = packedNoConfigBundle(on)
+    const { clock, blits } = fikaEnvironment(on, [], '', { MOCK_IMAGE_SUPPORT: '1' })
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    const buddy = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+    await clock.settle()
+    await expectPackedNoConfig((await buddy.find({ type: 'Image' }))?.props.source, 0)
+    expect(await buddy.find({ type: 'Raster' })).toBeUndefined()
+    blits.length = 0
+    for (let frame = 1; frame < 6; frame++) {
+      await clock.advance(50)
+      const last = blits[blits.length - 1]
+      if (!last || !('source' in last)) throw new Error('A packed animation frame must update the native Image')
+      await expectPackedNoConfig(last.source, frame)
+    }
+    expect(blits).toHaveLength(5)
+    expect(reads).toHaveLength(1)
+    await buddy.unmount()
+  })
+
+  test('a packed Image refusal switches to the existing colored raster animation', async ($, on) => {
+    const reads = packedNoConfigBundle(on)
+    const { clock, blits } = fikaEnvironment(on, [], '', { MOCK_IMAGE_SUPPORT: '1' }, 'Image draws its alt: terminal has no image protocol')
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    const buddy = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+    await clock.advance(100)
+    await expectBuddyVisible(buddy)
+    const imageProbe = blits.find(blit => 'source' in blit)
+    expect(imageProbe).toBeDefined()
+    if (!imageProbe || !('source' in imageProbe)) throw new Error('The packed native image must be probed before falling back')
+    await expectPackedNoConfig(imageProbe.source, 0)
+    expect(reads).toHaveLength(1)
+    blits.length = 0
+    await clock.advance(100)
+    expect(blits[blits.length - 1]).toHaveProperty('cells')
+    await buddy.unmount()
+  })
+
+  test('a malformed initial packed frame recovers with visible raster cells', async ($, on) => {
+    const reads = packedNoConfigBundle(on, true)
+    const { clock, blits } = fikaEnvironment(on, [], '', { MOCK_IMAGE_SUPPORT: '1' })
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    const buddy = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+    await expectBuddyVisible(buddy)
+    expect(reads).toHaveLength(1)
+    expect(blits.some(blit => 'source' in blit)).toBe(false)
+    await clock.advance(100)
+    expect(blits[blits.length - 1]).toHaveProperty('cells')
+    await buddy.unmount()
+  })
+})

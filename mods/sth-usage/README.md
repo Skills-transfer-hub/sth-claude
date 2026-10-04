@@ -1,8 +1,18 @@
 # Buddy · Claude Code
 
-Version **0.3.0**. The version is also visible at the bottom of the Home panel.
+Version **0.3.1**. The version is also visible at the bottom of the Home panel.
 
 Buddy tracks Claude context and quotas, changed files and checks, then helps you find STH skills that fit your project.
+
+Software source code is MIT-licensed. Buddy artwork, animation data and STH branding are reserved; see [LICENSE](LICENSE).
+
+## Typical uses
+
+- Watch context and quota usage while Claude works, then inspect active agents in Context.
+- Review changed files and observed test results in Summary, run a recognized check, and prepare a draft to resume the work later.
+- Connect a project to an STH catalog, install a relevant skill, and check installed versions before updating or removing it.
+
+The mod reads session and project information and saves a local Resume summary. See [Privacy and data handling](PRIVACY.md) for the exact contents, retention, external CLI behavior and deletion steps. For help, use [GitHub issues](https://github.com/Skills-transfer-hub/sth-claude/issues); do not include secrets or private project data.
 
 ## Install from GitHub
 
@@ -42,7 +52,7 @@ The interface lives in the right panel. The home screen keeps Buddy, followed by
 
 The Usage card shows each metric once: quotas and reset times, context, observed tokens, cost and agents. Pills follow the STH design system's neutral tokens: thin outlines, Inter labels and JetBrains Mono SVG values. Native controls keep the fonts and dimensions imposed by Claude; terminal buttons have neutral outlines. Red is reserved for errors.
 
-Desktop pill details appear on hover. The countdown redraws every 30 seconds without requesting new usage data. “~” marks tokens accumulated since the mod loaded; earlier history may be missing. A [panel preview](previews/usage-band/index.html) shows light, dark and narrow layouts with sample data; it is not a Claude session.
+Desktop pill details appear on hover. The countdown redraws every 30 seconds without requesting new usage data. “~” marks tokens accumulated since the mod loaded; earlier history may be missing. The [panel preview source on main](https://github.com/Skills-transfer-hub/sth-claude/blob/main/mods/sth-usage/previews/usage-band/index.html) shows light, dark and narrow layouts with sample data; it is not a Claude session.
 
 | Access | Function |
 | --- | --- |
@@ -55,7 +65,7 @@ Desktop pill details appear on hover. The countdown redraws every 30 seconds wit
 
 Buddy distinguishes work in progress, pending permission, errors, completed turns and interruptions. A main turn lasting at least 60 seconds triggers a discreet notification in Claude.
 
-Buddy tries to display the original PNGs when the terminal supports images: 384 × 384 for regular states and 720 × 720 for Fika. An actual image rejection from the terminal enables a colored quadrant fallback generated from 96 × 96 poses. This remains a character-based drawing: its detail depends on the panel size and terminal font. Under tmux, the fallback is used directly. The panel adapts the animation to its size and suggests enlarging it when space is limited. Desktop keeps the existing HD images.
+Buddy tries to display the original image pixels when the terminal supports images: 384 × 384 for regular states and 720 × 720 for Fika. Source checkouts read the original PNGs; compact releases reconstruct their RGBA pixels from lossless compressed frame data. The encoding preserves the pixels, dimensions and frame sequence, and playback keeps its existing timing. An actual image rejection from the terminal enables a colored quadrant fallback generated from 96 × 96 poses. This remains a character-based drawing: its detail depends on the panel size and terminal font. Under tmux, the fallback is used directly. The panel adapts the animation to its size and suggests enlarging it when space is limited. Desktop keeps the existing HD images.
 
 Context is estimated locally using Claude's `summary` mode. The mod does not call an additional model for tracking. Unknown metrics remain unavailable; cumulative billed tokens do not indicate how full the context window is.
 
@@ -99,9 +109,28 @@ claude plugin test .
 
 Tests cover terminal and desktop rendering, buttons and drafts, missing data, permissions, summaries and resume, plus the existing Buddy and Fika animations.
 
+## Publish a compact distribution
+
+Use a checkout of [the source on main](https://github.com/Skills-transfer-hub/sth-claude/tree/main/mods/sth-usage); compact releases omit build tools and previews. Commit the source changes and version bump first. The builder needs Python 3.12, Pillow 12.3.0 and NumPy 2.3.5. From the mod's source directory:
+
+```sh
+sth_release_dir=$(mktemp -d)
+sth_source_root=$(git rev-parse --show-toplevel)
+sth_source_commit=$(git rev-parse HEAD)
+python3 tools/build_directory_bundle.py --source . --output "$sth_release_dir/bundle" --include-tests
+claude plugin validate "$sth_release_dir/bundle/sth-usage"
+claude plugin test "$sth_release_dir/bundle/sth-usage"
+python3 tools/stage_directory_release.py --source-root "$sth_source_root" --bundle "$sth_release_dir/bundle/sth-usage" --output "$sth_release_dir/tree" --source-commit "$sth_source_commit"
+python3 tools/publish_directory_release.py --source-root "$sth_source_root" --tree "$sth_release_dir/tree" --publish
+```
+
+The publisher updates only `codex/directory-release`, which contains the compact plugin, marketplace, documentation and licensing notices. It refuses older versions and never force-pushes. Omitting `--publish` performs a dry run. Original artwork and development files remain on `main`.
+
+Configure the Claude Directory source to follow `codex/directory-release` so future update checks see compact releases. Directory validation and review remain separate from GitHub publication. Marketplace users can install from `https://github.com/Skills-transfer-hub/sth-claude.git#codex/directory-release`; they enable automatic updates separately in `/plugin` → Marketplaces → `sth`.
+
 ## Rebuild the preview
 
-With Node 22 or later and the STH design system available locally:
+From [the source checkout on main](https://github.com/Skills-transfer-hub/sth-claude/tree/main/mods/sth-usage), with Node 22 or later and the STH design system available locally:
 
 ```sh
 node tools/preview_usage_pills.mjs /path/to/design-system

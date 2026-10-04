@@ -1,0 +1,61 @@
+name: Publish compact Buddy distribution
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - mods/sth-usage/.claude-plugin/plugin.json
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: buddy-directory-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install fixed build and validation dependencies
+        run: |
+          python -m pip install Pillow==12.3.0 numpy==2.3.5
+          npm install --global @anthropic-ai/claude-code@2.1.289
+      - name: Build compact plugin from tracked source files
+        run: |
+          python mods/sth-usage/tools/build_directory_bundle.py \
+            --source mods/sth-usage \
+            --output "$RUNNER_TEMP/buddy-bundle" \
+            --include-tests
+      - name: Validate and test the actual generated plugin
+        env:
+          CLAUDE_CONFIG_DIR: ${{ runner.temp }}/buddy-validation-config
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+          DISABLE_AUTOUPDATER: '1'
+          DISABLE_TELEMETRY: '1'
+        run: |
+          claude plugin validate "$RUNNER_TEMP/buddy-bundle/sth-usage"
+          claude plugin test "$RUNNER_TEMP/buddy-bundle/sth-usage"
+      - name: Stage complete repository archive and enforce size limit
+        run: |
+          python mods/sth-usage/tools/stage_directory_release.py \
+            --source-root "$GITHUB_WORKSPACE" \
+            --bundle "$RUNNER_TEMP/buddy-bundle/sth-usage" \
+            --output "$RUNNER_TEMP/buddy-release-tree" \
+            --source-commit "$GITHUB_SHA"
+      - name: Publish only codex/directory-release
+        run: |
+          python mods/sth-usage/tools/publish_directory_release.py \
+            --source-root "$GITHUB_WORKSPACE" \
+            --tree "$RUNNER_TEMP/buddy-release-tree" \
+            --publish

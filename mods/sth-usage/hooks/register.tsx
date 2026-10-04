@@ -7,6 +7,7 @@ import { activityCaption, activityBuddyState, registerActivity } from './activit
 import { EMPTY_PROJECT, rankSkills, registerProject } from './project'
 import { panelChrome, paneNavigation } from './presentation'
 import { PLUGIN_VERSION } from './version'
+import { createBuddyImageReader } from './buddy-images'
 import terminalOk from '../ui/terminal-frames/ok'
 import terminalWork from '../ui/terminal-frames/work'
 import terminalDone from '../ui/terminal-frames/done'
@@ -286,10 +287,11 @@ type TerminalBuddy = {
   state: BuddyState; fikaStartedAt: number | null; image: boolean;
   key: string; columns: number; rows: number;
   lastFrame: number;
+  images: ReturnType<typeof createBuddyImageReader>;
+  blitting?: boolean;
 }
 const terminalBuddies = new Map<string, TerminalBuddy>()
 const imageFallbacks = new Set<string>()
-const hdFrameCounts: Record<BuddyState, number> = { ok: 80, work: 48, done: 38, error: 30, update: 36, noConfig: 72 }
 let imageTerminal: boolean | null = null
 let buddyAnimation: Timer | undefined
 const terminalFrames = {
@@ -311,15 +313,6 @@ async function terminalHasImages($: EngineInterface): Promise<boolean> {
     imageTerminal = !(await $.env.get('TMUX'))
   } catch { imageTerminal = false }
   return imageTerminal
-}
-
-function buddyImagePath(root: string, state: BuddyState, tick: number): string {
-  const frame = tick % hdFrameCounts[state]
-  return `${root}/assets/frames/${state}/${String(frame).padStart(3, '0')}.png`
-}
-
-function fikaImagePath(root: string, frame: number): string {
-  return `${root}/assets/fika/fika-${String(frame + 1).padStart(4, '0')}.png`
 }
 
 function compactBuddyHeader(e: RenderInput<'Pane'>): boolean {
@@ -347,14 +340,25 @@ function terminalBlitResult($: EngineInterface, requestId: string, entry: Termin
   }
 }
 
+// SDK calls stay in this hook module for Claude's static capability audit.
+function readBuddyImage($: EngineInterface, images: ReturnType<typeof createBuddyImageReader>, sequence: BuddyState | 'fika', frame: number) {
+  return images.read($.plugin.root, path => $.fs.exists(path), path => $.fs.read(path), sequence, frame)
+}
+
 function blitBuddy($: EngineInterface, requestId: string, entry: TerminalBuddy, frame: number): void {
-  if (terminalBuddies.get(requestId) !== entry) return
+  if (terminalBuddies.get(requestId) !== entry || entry.blitting) return
   const fika = entry.fikaStartedAt !== null
   entry.lastFrame = fika && !entry.image ? Math.floor(frame * FIKA_RASTER_FPS / FIKA_HD_FPS) : frame
   if (entry.image) {
-    const file = fika ? fikaImagePath($.plugin.root, frame) : buddyImagePath($.plugin.root, entry.state, frame)
-    void $.ui.blit({ requestId, key: entry.key, source: { file, format: 'png' }, columns: entry.columns, rows: entry.rows })
-      .then(result => terminalBlitResult($, requestId, entry, result.deny))
+    entry.blitting = true
+    void readBuddyImage($, entry.images, fika ? 'fika' : entry.state, frame)
+      .then(async source => {
+        if (terminalBuddies.get(requestId) !== entry) return
+        const result = await $.ui.blit({ requestId, key: entry.key, source, columns: entry.columns, rows: entry.rows })
+        terminalBlitResult($, requestId, entry, result.deny)
+      })
+      .catch(() => terminalBlitResult($, requestId, entry, 'Buddy image could not be loaded'))
+      .finally(() => { entry.blitting = false })
   } else {
     const cells = fika ? terminalFika[Math.min(terminalFika.length - 1, Math.floor(frame * FIKA_RASTER_FPS / FIKA_HD_FPS))]! : buddyCells(entry.state, frame)
     void $.ui.blit({ requestId, key: entry.key, cells: terminalRaster(cells, entry.columns, entry.rows), columns: entry.columns, rows: entry.rows })
@@ -390,14 +394,25 @@ async function buddyElement(
     }
     const key = `buddy-${image ? 'image' : 'raster'}-${fikaFrame !== null ? `fika-${fikaStartedAt}` : state}-${size.columns}x${size.rows}`
     const lastFrame = fikaFrame === null ? buddyTick : image ? fikaFrame : Math.floor(fikaFrame * FIKA_RASTER_FPS / FIKA_HD_FPS)
-    const entry: TerminalBuddy = { state, fikaStartedAt, image, key, ...size, lastFrame }
+    const images = terminalBuddies.get(requestId)?.images ?? createBuddyImageReader()
+    const entry: TerminalBuddy = { state, fikaStartedAt, image, key, ...size, lastFrame, images }
     terminalBuddies.set(requestId, entry)
     if (image) {
-      const file = fikaFrame !== null ? fikaImagePath($.plugin.root, fikaFrame) : buddyImagePath($.plugin.root, state, buddyTick)
+      let source
+      try { source = await readBuddyImage($, images, fikaFrame !== null ? 'fika' : state, fikaFrame ?? buddyTick) }
+      catch {
+        if (terminalBuddies.get(requestId) !== entry) {
+          $.ui.invalidate('ui.render')
+          return null
+        }
+        imageFallbacks.add(requestId)
+        return buddyElement($, e, requestId, state, caption, fikaStartedAt, thought)
+      }
+      if (terminalBuddies.get(requestId) !== entry) return null
       // Probe after mounting, including panes drawn before session.start in a
       // host. Unsupported protocols recover without waiting for a model turn.
       $.clock.after(0, () => blitBuddy($, requestId, entry, fikaFrame ?? buddyTick))
-      return <Image key={key} source={{ file, format: 'png' }} columns={size.columns} rows={size.rows} alt={caption} />
+      return <Image key={key} source={source} columns={size.columns} rows={size.rows} alt={caption} />
     }
     return (
       <Raster

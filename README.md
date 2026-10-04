@@ -1,6 +1,6 @@
 # STH · Buddy for Claude Code
 
-**v0.3.0** · Buddy keeps usage, session summaries, project diagnostics and STH catalogs in one right-hand panel. The interface is in English and follows the STH design system. Buddy keeps its original visuals and animations.
+**v0.3.1** · Buddy keeps usage, session summaries, project diagnostics and STH catalogs in one right-hand panel. The interface is in English and follows the STH design system. Buddy keeps its original visuals and animations.
 
 ## Install
 
