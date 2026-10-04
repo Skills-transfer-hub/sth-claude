@@ -1,0 +1,34 @@
+{
+  "source": "assets/model/buddy-v6.blend",
+  "fps": 30,
+  "seconds": 9,
+  "frames": 270,
+  "review_only": false,
+  "integrated": true,
+  "selected_version": "V1",
+  "beats": {
+    "prise": 1.3,
+    "gorgee": 2.85,
+    "morsure": 6.1,
+    "mastication": 6.8,
+    "retour": 8.7
+  },
+  "scene_source": "previews/fika-3d/buddy-fika-review.blend",
+  "transparent": true,
+  "shadow_catcher": true,
+  "renderer": "CYCLES",
+  "samples": 32,
+  "exports": {
+    "webm": {
+      "file": "buddy-fika-transparent.webm",
+      "codec": "VP9",
+      "alpha": true
+    },
+    "mov": {
+      "file": "buddy-fika-transparent.mov",
+      "codec": "ProRes 4444",
+      "alpha": true
+    }
+  },
+  "alpha_verified_frames": 270
+}

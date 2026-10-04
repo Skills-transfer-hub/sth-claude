@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buddy · La table de fika</title>
+<style>
+  *{box-sizing:border-box} body{margin:0;background:#f4f3f0;color:#252623;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif}
+  main{max-width:820px;margin:auto;padding:24px 24px 32px} header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}
+  h1{font-size:23px;letter-spacing:-.6px;margin:4px 0} .eyebrow{font-size:11px;letter-spacing:2px;color:#77796f;text-transform:uppercase}
+  .badge{border:1px solid #d5d6cb;background:#fffef9;border-radius:30px;font-size:12px;padding:7px 12px;white-space:nowrap}
+  video{display:block;width:min(100%,72vh);margin:auto;aspect-ratio:1;border-radius:22px;background:#d0d0cf;box-shadow:0 12px 36px #1d211817}
+  .actions{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:16px} button{cursor:pointer;background:white;border:1px solid #d5d6cb;border-radius:10px;font:inherit;font-size:13px;padding:10px 14px;color:inherit}
+  button:first-child{background:#2d312a;color:#fff;border-color:#2d312a} button:hover{filter:brightness(.95)} button:focus-visible{outline:2px solid #747e65;outline-offset:3px}
+  p{font-size:14px;line-height:1.55;color:#74776e;text-align:center} footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12px;color:#7d8076;margin-top:18px}
+  a{color:inherit} @media(max-width:550px){main{padding:18px 14px}header{align-items:flex-start;flex-direction:column}h1{font-size:21px}}
+</style>
+<main>
+  <header><div><div class="eyebrow">Buddy · Stockholm</div><h1>Sa fika, sa petite table.</h1></div><span class="badge">Rendu à valider</span></header>
+  <video id="film" controls playsinline preload="auto" poster="pose-183.png" aria-label="Buddy sort sa table pliante, boit son café, mange un kanelbulle puis range sa table"><source src="buddy-fika-review.mp4" type="video/mp4"></video>
+  <div class="actions"><button data-time="0">▶ Rejouer</button><button data-time="0.5">Sortir la table</button><button data-time="5.7">La gorgée</button><button data-time="8.9">La morsure</button><button data-time="12.1">Tout ranger</button></div>
+  <p>Buddy sort sa table, l’installe et prend sa pause fika.<br>Puis il range son café, sa brioche et replie la table derrière lui.</p>
+  <footer><span>15,5 secondes · 30 images par seconde</span><a href="buddy-fika-review.blend" download>Ouvrir le fichier Blender</a></footer>
+</main>
+<script>
+const film=document.getElementById('film');
+document.querySelectorAll('[data-time]').forEach(button=>button.addEventListener('click',()=>{film.currentTime=Number(button.dataset.time);film.play();}));
+</script>
+</html>

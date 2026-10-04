@@ -1,0 +1,50 @@
+{
+  "source": "previews/fika-3d/transparent",
+  "source_sha256": "9b3bcd3f82f7398bb938515b2903c52f8502f2cc2fc3eeef5d60c1753ebd3106",
+  "fps": 30,
+  "duration_ms": 9000,
+  "frames": 270,
+  "source_size": [
+    720,
+    720
+  ],
+  "desktop_size": [
+    384,
+    384
+  ],
+  "terminal_cells": [
+    24,
+    12
+  ],
+  "quality": 75,
+  "alpha_quality": 50,
+  "desktop_modules": 24,
+  "terminal_modules": 24,
+  "desktop_module_bytes": 2348854,
+  "terminal_module_bytes": 1246481,
+  "max_webp_bytes": 6884,
+  "transparent": true,
+  "transparent_png_frames": 270,
+  "transparent_webp_frames": 270,
+  "alpha_mask_verified": true,
+  "alpha_exact": false,
+  "alpha_loss": {
+    "mae_mean": 2.1824560345936215,
+    "geometry_mae_max": 0.7267753359970941,
+    "edge_mae_max": 3.8676599474145488,
+    "bbox_shift_max": 1,
+    "source_zero_preserved": true
+  },
+  "resampling": "Lanczos with premultiplied alpha",
+  "attempts": [
+    {
+      "quality": 75,
+      "alpha_quality": 50,
+      "desktop_bytes": 2348854,
+      "graph_bytes": 8224471
+    }
+  ],
+  "ui_files": 62,
+  "ui_source_bytes_total": 8224471,
+  "ui_source_bytes_max": 869934
+}

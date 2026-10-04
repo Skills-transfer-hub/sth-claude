@@ -1,0 +1,16 @@
+{
+  "source": "assets/model/buddy-v6.blend",
+  "fps": 30,
+  "seconds": 15.5,
+  "frames": 465,
+  "review_only": true,
+  "integrated": false,
+  "beats": {
+    "sortie_table": 1.1,
+    "installation": 2.3,
+    "gorgee": 6.05,
+    "morsure": 9.3,
+    "mastication": 10.0,
+    "rangement_table": 14.12
+  }
+}

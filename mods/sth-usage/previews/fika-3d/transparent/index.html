@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buddy · Fika sans fond</title>
+<style>
+  *{box-sizing:border-box} body{margin:0;background:#f4f3f0;color:#252623;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif}
+  main{max-width:820px;margin:auto;padding:32px 24px 48px} header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}
+  h1{font-size:23px;letter-spacing:-.6px;margin:4px 0} .eyebrow{font-size:11px;letter-spacing:2px;color:#77796f;text-transform:uppercase}
+  .badge{border:1px solid #d5d6cb;background:#fffef9;border-radius:30px;font-size:12px;padding:7px 12px;white-space:nowrap}
+  .stage{border-radius:22px;overflow:hidden;box-shadow:0 12px 36px #1d211817;background-color:#fff;background-image:linear-gradient(45deg,#e2e2e2 25%,transparent 25%),linear-gradient(-45deg,#e2e2e2 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e2e2e2 75%),linear-gradient(-45deg,transparent 75%,#e2e2e2 75%);background-size:32px 32px;background-position:0 0,0 16px,16px -16px,-16px 0}
+  .stage[data-background=light]{background:#fff} .stage[data-background=dark]{background:#1b1b1b}
+  video{display:block;width:100%;aspect-ratio:1;background:transparent}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px} button{cursor:pointer;background:white;border:1px solid #d5d6cb;border-radius:10px;font:inherit;font-size:13px;padding:10px 14px;color:inherit}
+  button[aria-pressed=true],button[data-time="0"]{background:#2d312a;color:#fff;border-color:#2d312a} button:hover{filter:brightness(.95)} button:focus-visible{outline:2px solid #747e65;outline-offset:3px}
+  p{font-size:14px;line-height:1.55;color:#74776e} footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12px;color:#7d8076;margin-top:22px}
+  a{color:inherit} @media(max-width:550px){main{padding:20px 14px}header{align-items:flex-start;flex-direction:column}h1{font-size:21px}}
+</style>
+<main>
+  <header><div><div class="eyebrow">Buddy · Stockholm</div><h1>Une petite pause fika.</h1></div><span class="badge">Fond transparent</span></header>
+  <div class="stage" id="stage" data-background="checker"><video id="film" controls playsinline preload="auto" poster="pose-001.png" aria-label="Buddy boit un café et croque un kanelbulle, sur fond transparent"><source src="buddy-fika-transparent.webm" type="video/webm"></video></div>
+  <div class="actions" aria-label="Fond de prévisualisation"><button data-background="checker" aria-pressed="true">Damier</button><button data-background="light" aria-pressed="false">Fond clair</button><button data-background="dark" aria-pressed="false">Fond sombre</button></div>
+  <div class="actions"><button data-time="0">▶ Rejouer</button><button data-time="2.8">La gorgée</button><button data-time="6.2">La morsure</button></div>
+  <p>La première animation, sans fond. Le damier sert à visualiser la transparence ; les ombres sous Buddy et la table sont conservées.</p>
+  <footer><span>9 secondes · 30 images par seconde</span><a href="buddy-fika-transparent.webm" download>Télécharger WebM</a><a href="buddy-fika-transparent.mov" download>Télécharger MOV avec alpha</a><a href="buddy-fika-transparent.blend" download>Fichier Blender</a></footer>
+</main>
+<script>
+const film=document.getElementById('film');
+const stage=document.getElementById('stage');
+document.querySelectorAll('button[data-time]').forEach(button=>button.addEventListener('click',()=>{
+  const time=Number(button.dataset.time);
+  if(Math.abs(film.currentTime-time)<0.01){film.play();return;}
+  film.pause();
+  film.addEventListener('seeked',()=>film.play(),{once:true});
+  film.currentTime=time;
+}));
+document.querySelectorAll('button[data-background]').forEach(button=>button.addEventListener('click',()=>{stage.dataset.background=button.dataset.background;document.querySelectorAll('button[data-background]').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));}));
+</script>
+</html>

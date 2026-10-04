@@ -1,0 +1,12 @@
+.DS_Store
+node_modules/
+.env
+.env.*
+!.env.example
+**/.claude-plugin/types/
+**/__pycache__/
+*.py[cod]
+*.blend[0-9]
+**/.sth/
+**/.claude/settings.local.json
+mods/sth-usage/previews/**/frames/

@@ -1,0 +1,6 @@
+* text=auto
+*.blend binary
+*.png binary
+*.mov binary
+*.mp4 binary
+*.webm binary

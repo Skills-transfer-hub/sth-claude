@@ -1,0 +1,6 @@
+{
+  "name": "sth-usage",
+  "version": "0.1.1",
+  "description": "Buddy : suivi de consommation, skills STH et pause fika animée sans fond avant le premier prompt",
+  "types": "./types/index.d.ts"
+}
