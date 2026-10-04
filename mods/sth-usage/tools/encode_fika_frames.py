@@ -21,12 +21,20 @@ import tempfile
 from PIL import Image, ImageChops, ImageFilter, ImageStat
 
 from check_buddy_assets import MAX_GRAPH_BYTES, MAX_MODULE_BYTES, check_ui_budget, frame_svg, webp_info
-from encode_buddy_terminal import COLUMNS, ROWS, encode_frame as terminal_frame
+from encode_buddy_terminal import MAIN_COLUMNS, MAIN_ROWS, MAIN_SOURCE_WIDTH, MAIN_SOURCE_HEIGHT, MAIN_GAMMA
+from buddy_terminal_codec import encode_packet, decode_packet
 
 
 FPS = 30
 DURATION_MS = 9_000
 FRAME_COUNT = 270
+TERMINAL_COLUMNS = MAIN_COLUMNS
+TERMINAL_ROWS = MAIN_ROWS
+TERMINAL_SOURCE_WIDTH = MAIN_SOURCE_WIDTH
+TERMINAL_SOURCE_HEIGHT = MAIN_SOURCE_HEIGHT
+TERMINAL_FPS = 15
+TERMINAL_GAMMA = MAIN_GAMMA
+TERMINAL_STRIDE = FPS // TERMINAL_FPS
 SIZE = 384
 SOURCE_SIZE = 720
 CHUNK_FRAMES = 12
@@ -65,10 +73,11 @@ def modules_for(frames, terminal=False):
         modules[name] = module.encode("utf-8")
         imports.append(f"import block{index} from './{index:03d}';")
     index_source = "\n".join(imports) + "\n"
-    index_source += f"export const FPS = {FPS};\nexport const DURATION_MS = {DURATION_MS};\n"
-    index_source += f"export const FRAME_COUNT = {FRAME_COUNT};\n"
+    index_source += f"export const FPS = {TERMINAL_FPS if terminal else FPS};\nexport const DURATION_MS = {DURATION_MS};\n"
+    index_source += f"export const FRAME_COUNT = {len(frames)};\n"
     if terminal:
-        index_source += f"export const COLUMNS = {COLUMNS};\nexport const ROWS = {ROWS};\n"
+        index_source += f"export const COLUMNS = {TERMINAL_COLUMNS};\nexport const ROWS = {TERMINAL_ROWS};\n"
+        index_source += f"export const SOURCE_WIDTH = {TERMINAL_SOURCE_WIDTH};\nexport const SOURCE_HEIGHT = {TERMINAL_SOURCE_HEIGHT};\n"
     expression = ",".join(f"...block{index}" for index in range(len(imports)))
     index_source += f"export const FRAMES: string[] = [{expression}];\nexport default FRAMES;\n"
     modules["index.ts"] = index_source.encode("utf-8")
@@ -93,9 +102,10 @@ def prepare_pose(item, work):
         # Filter associated RGB and alpha together so invisible colors cannot form fringes.
         resized = pose.convert("RGBa").resize((SIZE, SIZE), Image.Resampling.LANCZOS).convert("RGBA")
         resized.save(output)
-    encoded_terminal = terminal_frame(source)
-    if len(base64.b64decode(encoded_terminal, validate=True)) != COLUMNS * ROWS * 3 * 4:
-        raise ValueError(f"Invalid terminal LEu32 triplets: {source}")
+    encoded_terminal = (encode_packet(source, width=TERMINAL_SOURCE_WIDTH, height=TERMINAL_SOURCE_HEIGHT, gamma=TERMINAL_GAMMA)
+                        if index % TERMINAL_STRIDE == 0 else None)
+    if encoded_terminal is not None and decode_packet(encoded_terminal)[:2] != (TERMINAL_SOURCE_WIDTH, TERMINAL_SOURCE_HEIGHT):
+        raise ValueError(f"Invalid terminal BP1 dimensions: {source}")
     return output, encoded_terminal, hashlib.sha256(source.read_bytes()).digest()
 
 
@@ -163,11 +173,68 @@ def install_modules(ui, group, modules, work):
             path.unlink()
 
 
+def install_native_sources(sources, ui, work):
+    """Include exact source PNGs so image-capable terminals work in fresh clones."""
+    destination = ui.parent / "assets" / "fika"
+    expected = {source.name for source in sources}
+    unexpected = {path.name for path in destination.glob("*.png")} - expected
+    if unexpected:
+        raise ValueError(f"Unexpected native Fika PNG files; preserve and inspect them: {sorted(unexpected)}")
+    destination.mkdir(parents=True, exist_ok=True)
+    staging = work / "native-fika"
+    staging.mkdir()
+    for source in sources:
+        content = source.read_bytes()
+        target = destination / source.name
+        if target.is_file() and target.read_bytes() == content:
+            continue
+        candidate = staging / source.name
+        candidate.write_bytes(content)
+        candidate.replace(target)
+
+
+def terminal_only(sources, ui):
+    """Refresh the terminal poses while preserving every desktop WebP byte."""
+    manifest_path = ui / "frames" / "fika" / "manifest.json"
+    report = json.loads(manifest_path.read_text())
+    frames, digests = [], []
+    for index, source in enumerate(sources):
+        with Image.open(source) as pose:
+            pose.load()
+            validate_pose(pose, source)
+        digests.append(hashlib.sha256(source.read_bytes()).digest())
+        if index % TERMINAL_STRIDE == 0:
+            frame = encode_packet(source, width=TERMINAL_SOURCE_WIDTH, height=TERMINAL_SOURCE_HEIGHT, gamma=TERMINAL_GAMMA)
+            if decode_packet(frame)[:2] != (TERMINAL_SOURCE_WIDTH, TERMINAL_SOURCE_HEIGHT):
+                raise ValueError(f"Invalid terminal BP1 dimensions: {source}")
+            frames.append(frame)
+    digest = hashlib.sha256(b"".join(digests)).hexdigest()
+    if digest != report.get("source_sha256"):
+        raise ValueError("Terminal-only refresh requires the unchanged desktop source poses")
+    modules = modules_for(frames, terminal=True)
+    terminal_bytes = sum(map(len, modules.values()))
+    desktop_bytes = sum(path.stat().st_size for path in (ui / "frames" / "fika").glob("*.ts") if generated_module(path, ui))
+    graph_bytes = existing_source_bytes(ui) + desktop_bytes + terminal_bytes
+    if graph_bytes + GRAPH_HEADROOM > MAX_GRAPH_BYTES:
+        raise ValueError(f"Terminal poses exceed the 8 MiB UI graph budget: {graph_bytes}")
+    with tempfile.TemporaryDirectory(prefix="fika-terminal-codec-") as folder:
+        install_modules(ui, "terminal-frames", modules, Path(folder))
+    report.update({"terminal_cells": [TERMINAL_COLUMNS, TERMINAL_ROWS], "terminal_fps": TERMINAL_FPS,
+                   "terminal_frames": len(frames), "terminal_stride": TERMINAL_STRIDE, "terminal_gamma": TERMINAL_GAMMA,
+                   "terminal_codec": "BP1", "terminal_source_size": [TERMINAL_SOURCE_WIDTH, TERMINAL_SOURCE_HEIGHT],
+                   "terminal_modules": len(modules), "terminal_module_bytes": terminal_bytes, **check_ui_budget(ui)})
+    manifest_path.write_text(json.dumps(report, indent=2) + "\n")
+    print(json.dumps({"terminal_only": True, "source_sha256": digest, "terminal_cells": [TERMINAL_COLUMNS, TERMINAL_ROWS],
+                      "terminal_fps": TERMINAL_FPS, "terminal_frames": len(frames), "duration_ms": DURATION_MS,
+                      "terminal_module_bytes": terminal_bytes, "ui_source_bytes_total": graph_bytes}), flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("preview", type=Path, help="Transparent V1 directory with manifest.json and frames/")
     parser.add_argument("--ui", type=Path, default=Path(__file__).resolve().parents[1] / "ui")
     parser.add_argument("--check-only", action="store_true", help="Validate source poses without encoding or modifying UI")
+    parser.add_argument("--terminal-only", action="store_true", help="Refresh terminal cells without regenerating the desktop WebP poses")
     args = parser.parse_args()
     preview, ui = args.preview.resolve(), args.ui.resolve()
     manifest = json.loads((preview / "manifest.json").read_text())
@@ -189,6 +256,9 @@ def main():
         return
     if not ui.is_dir():
         parser.error(f"Not a UI folder: {ui}")
+    if args.terminal_only:
+        terminal_only(sources, ui)
+        return
     binary = shutil.which(os.environ.get("BUDDY_CWEBP") or "cwebp")
     if binary is None:
         parser.error("cwebp not found; set BUDDY_CWEBP to its executable path")
@@ -197,7 +267,7 @@ def main():
         workers = min(os.cpu_count() or 1, 6)
         with ThreadPoolExecutor(max_workers=workers) as pool:
             poses = list(pool.map(lambda item: prepare_pose(item, work), enumerate(sources)))
-        terminal_modules = modules_for([pose[1] for pose in poses], terminal=True)
+        terminal_modules = modules_for([pose[1] for pose in poses if pose[1] is not None], terminal=True)
         terminal_bytes = sum(map(len, terminal_modules.values()))
         selected = None
         attempts = []
@@ -214,14 +284,20 @@ def main():
                 break
         if selected is None:
             raise ValueError(f"No quality preserves the 8 MiB UI graph budget: {attempts}")
+        install_native_sources(sources, ui, work)
         install_modules(ui, "frames", desktop_modules, work)
         install_modules(ui, "terminal-frames", terminal_modules, work)
         budget = check_ui_budget(ui)
         report = {
-            "source": str(preview), "source_sha256": hashlib.sha256(b"".join(pose[2] for pose in poses)).hexdigest(),
+            "source": str(preview.relative_to(ui.parent)) if preview.is_relative_to(ui.parent) else str(preview),
+            "source_sha256": hashlib.sha256(b"".join(pose[2] for pose in poses)).hexdigest(),
             "fps": FPS, "duration_ms": DURATION_MS, "frames": FRAME_COUNT,
             "source_size": [SOURCE_SIZE, SOURCE_SIZE], "desktop_size": [SIZE, SIZE],
-            "terminal_cells": [COLUMNS, ROWS], "quality": selected, "alpha_quality": ALPHA_QUALITY,
+            "native_source_path": "assets/fika", "native_frames": len(sources),
+            "terminal_cells": [TERMINAL_COLUMNS, TERMINAL_ROWS], "terminal_fps": TERMINAL_FPS,
+            "terminal_frames": FRAME_COUNT // TERMINAL_STRIDE, "terminal_stride": TERMINAL_STRIDE, "terminal_gamma": TERMINAL_GAMMA,
+            "terminal_codec": "BP1", "terminal_source_size": [TERMINAL_SOURCE_WIDTH, TERMINAL_SOURCE_HEIGHT],
+            "quality": selected, "alpha_quality": ALPHA_QUALITY,
             "desktop_modules": len(desktop_modules), "terminal_modules": len(terminal_modules),
             "desktop_module_bytes": desktop_bytes, "terminal_module_bytes": terminal_bytes,
             "max_webp_bytes": max(pose[1] for pose in encoded),

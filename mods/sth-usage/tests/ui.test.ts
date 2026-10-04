@@ -1,8 +1,9 @@
 import type { On, RenderPropsOf, SessionMessage, UiBlitArgs } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
-import type { Mounted } from 'claude-code/testing'
+import type { Mounted, MockClock } from 'claude-code/testing'
 
 import { isPromptText, isUserPrompt } from '../hooks/fika'
+import { terminalRaster } from '../hooks/terminal-raster'
 import type { SkillsView } from '../types'
 import ok from '../ui/frames/ok'
 import work from '../ui/frames/work'
@@ -11,14 +12,16 @@ import error from '../ui/frames/error'
 import update from '../ui/frames/update'
 import noConfig from '../ui/frames/noConfig'
 import fika from '../ui/frames/fika/index'
-import terminalFika from '../ui/terminal-frames/fika/index'
+import terminalFika, { COLUMNS as FIKA_COLUMNS, ROWS as FIKA_ROWS, FPS as FIKA_RASTER_FPS } from '../ui/terminal-frames/fika/index'
 import terminalNoConfig from '../ui/terminal-frames/noConfig'
+import { COLUMNS as MAIN_COLUMNS, ROWS as MAIN_ROWS } from '../ui/terminal-frames/settings'
 
 const buddyFrames = { ok, work, done, error, update, noConfig }
 
 const SURFACES = ['terminal', 'desktop'] as const
 const RESOURCE = 'team::guides/review'
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7mEAAAAASUVORK5CYII='
+let fixtureClock: MockClock | undefined
 
 function paneProps(bodyColumns: number): RenderPropsOf['Pane'] {
   return {
@@ -31,30 +34,53 @@ function paneProps(bodyColumns: number): RenderPropsOf['Pane'] {
   }
 }
 
-function expectVisibleRaster(cells: unknown) {
+function rasterColors(cells: unknown, columns = MAIN_COLUMNS, rows = MAIN_ROWS) {
   if (typeof cells !== 'string') throw new Error('Buddy must provide terminal cells')
   const bytes = Uint8Array.from(atob(cells), character => character.charCodeAt(0))
-  expect(bytes.length).toBe(24 * 12 * 12)
+  expect(bytes.length).toBe(columns * rows * 12)
   const view = new DataView(bytes.buffer)
   let visibleCells = 0
   const colors = new Set<number>()
+  const luminance: number[] = []
   for (let offset = 0; offset < bytes.length; offset += 12) {
     if (view.getUint32(offset, true) !== 0x20) visibleCells += 1
-    colors.add(view.getUint32(offset + 4, true))
-    colors.add(view.getUint32(offset + 8, true))
+    for (const word of [4, 8]) {
+      const color = view.getUint32(offset + word, true)
+      colors.add(color)
+      if (color !== 0x01000000) {
+        luminance.push(((color >> 16) & 255) * 0.2126 + ((color >> 8) & 255) * 0.7152 + (color & 255) * 0.0722)
+      }
+    }
   }
+  return { visibleCells, colors, luminance: luminance.sort((a, b) => a - b) }
+}
+
+function expectVisibleRaster(cells: unknown, columns = MAIN_COLUMNS, rows = MAIN_ROWS) {
+  const { visibleCells, colors } = rasterColors(cells, columns, rows)
   expect(visibleCells).toBeGreaterThan(20)
   expect(colors.size).toBeGreaterThan(10)
 }
 
-async function expectBuddyVisible(ui: Pick<Mounted<'terminal' | 'desktop', 'Pane'>, 'surface' | 'find' | 'drawn'>) {
+function expectRasterPose(cells: unknown, packet: string | undefined, columns = MAIN_COLUMNS, rows = MAIN_ROWS) {
+  if (!packet) throw new Error('The expected Buddy source pose is missing')
+  // Keep failures readable: a full base64 comparison hides the useful assertion.
+  expect(cells === terminalRaster(packet, columns, rows), `Buddy pose must match the decoded ${columns}×${rows} source`).toBe(true)
+}
+
+function expectRasterBlit(blit: UiBlitArgs | undefined, packet: string | undefined, columns = MAIN_COLUMNS, rows = MAIN_ROWS) {
+  if (!blit || !('cells' in blit)) throw new Error('Buddy must update the terminal raster')
+  expectRasterPose(blit.cells, packet, columns, rows)
+}
+
+async function expectBuddyVisible(ui: Pick<Mounted<'terminal' | 'desktop', 'Pane'>, 'surface' | 'find' | 'findAll' | 'drawn'>) {
+  await fixtureClock?.settle()
   if (ui.surface === 'terminal') {
-    const drawing = await ui.find({ type: 'Raster', key: 'buddy' })
+    const drawing = (await ui.findAll({ type: 'Raster' })).find(node => node.key?.startsWith('buddy-raster-'))
     expect(drawing).toBeDefined()
-    expect(drawing?.props.columns).toBe(24)
-    expect(drawing?.props.rows).toBe(12)
+    expect(drawing?.props.columns).toBe(MAIN_COLUMNS)
+    expect(drawing?.props.rows).toBe(MAIN_ROWS)
     expectVisibleRaster(drawing?.props.cells)
-    expect(await ui.find({ type: 'Image', key: 'buddy' })).toBeUndefined()
+    expect(await ui.find({ type: 'Image' })).toBeUndefined()
   } else {
     const drawing = await ui.drawn({ in: 'buddy-noConfig' })
     expect(drawing.type).toBe('Svg')
@@ -65,16 +91,21 @@ async function expectBuddyVisible(ui: Pick<Mounted<'terminal' | 'desktop', 'Pane
   }
 }
 
-async function expectOnlyBuddyPose(ui: Mounted<'terminal' | 'desktop', 'Pane'>, state: 'noConfig' | 'fika', frame?: number) {
+async function expectOnlyBuddyPose<P extends 'terminal' | 'desktop'>(ui: Mounted<P, 'Pane'>, state: 'noConfig' | 'fika', frame?: number) {
+  await fixtureClock?.settle()
   expect(await ui.find({ key: 'fika-scene' })).toBeUndefined()
   if (ui.surface === 'terminal') {
     const drawings = await ui.findAll({ type: 'Raster' })
     expect(drawings).toHaveLength(1)
-    expect(drawings[0]?.key).toBe('buddy')
+    expect(drawings[0]?.key?.startsWith('buddy-raster-')).toBe(true)
     const poses = state === 'fika' ? terminalFika : terminalNoConfig
-    if (frame === undefined) expect(poses.includes(drawings[0]?.props.cells as string)).toBe(true)
-    else expect(drawings[0]?.props.cells).toBe(poses[frame])
-    expectVisibleRaster(drawings[0]?.props.cells)
+    const columns = state === 'fika' ? FIKA_COLUMNS : MAIN_COLUMNS
+    const rows = state === 'fika' ? FIKA_ROWS : MAIN_ROWS
+    if (frame === undefined) expect(poses.some(packet => terminalRaster(packet, columns, rows) === drawings[0]?.props.cells)).toBe(true)
+    else expectRasterPose(drawings[0]?.props.cells, poses[state === 'fika' ? Math.floor(frame * FIKA_RASTER_FPS / 30) : frame], columns, rows)
+    expect(drawings[0]?.props.columns).toBe(columns)
+    expect(drawings[0]?.props.rows).toBe(rows)
+    expectVisibleRaster(drawings[0]?.props.cells, columns, rows)
   } else {
     const clients = (await ui.findAll({ type: 'Client' })).filter(client => client.key?.startsWith('buddy-'))
     expect(clients).toHaveLength(1)
@@ -91,7 +122,7 @@ async function expectOnlyBuddyPose(ui: Mounted<'terminal' | 'desktop', 'Pane'>, 
   }
 }
 
-async function findFikaClient(ui: Mounted<'terminal' | 'desktop', 'Pane'>) {
+async function findFikaClient<P extends 'terminal' | 'desktop'>(ui: Mounted<P, 'Pane'>) {
   return (await ui.findAll({ type: 'Client' })).find(client => client.key?.startsWith('buddy-fika-scene-'))
 }
 
@@ -118,6 +149,273 @@ describe('Buddy in text terminals', () => {
       await ui.unmount()
     }
   })
+
+  test('the body remains visible against a dark terminal background', () => {
+    // Check the decoded, fitted cells that the terminal actually receives.
+    const { visibleCells, colors, luminance } = rasterColors(terminalRaster(terminalNoConfig[0]!, MAIN_COLUMNS, MAIN_ROWS))
+    expect(visibleCells).toBeGreaterThan(100)
+    expect(colors.has(0x01000000)).toBe(true)
+    expect(luminance[Math.floor(luminance.length / 2)]).toBeGreaterThan(75)
+    expect(luminance[Math.floor(luminance.length / 4)]).toBeGreaterThan(65)
+  })
+
+  test('the portable animation changes once per 100 ms while Fika keeps its own cadence', async ($, on) => {
+    const { clock, blits } = fikaEnvironment(on)
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    const buddy = await $.ui.mount({
+      plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage',
+      props: paneProps(64), viewport: { columns: 180, rows: 50 },
+    })
+    await expectOnlyBuddyPose(buddy, 'noConfig', 0)
+    blits.length = 0
+    await clock.advance(99)
+    expect(blits.filter(blit => blit.requestId === 'sth-usage')).toHaveLength(0)
+    await clock.advance(1)
+    expect(blits.filter(blit => blit.requestId === 'sth-usage')).toHaveLength(1)
+    expectRasterBlit(blits[blits.length - 1], terminalNoConfig[1])
+    await clock.advance(100)
+    expect(blits.filter(blit => blit.requestId === 'sth-usage')).toHaveLength(2)
+    expectRasterBlit(blits[blits.length - 1], terminalNoConfig[2])
+    await buddy.unmount()
+  })
+
+  const imageTerminals: ReadonlyArray<Readonly<Record<string, string>>> = [{ TERM_PROGRAM: 'ghostty' }, { TERM: 'xterm-kitty' }]
+  for (const variables of imageTerminals) {
+    test(`a ${variables.TERM_PROGRAM ?? variables.TERM} terminal uses the original PNG animation`, async ($, on) => {
+      const { clock, blits } = fikaEnvironment(on, [], '', variables)
+      await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+      const buddy = await $.ui.mount({
+        plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage',
+        props: paneProps(64), viewport: { columns: 180, rows: 50 },
+      })
+      const image = await buddy.find({ type: 'Image' })
+      expect(image).toBeDefined()
+      expect(image?.props).toMatchObject({ columns: 24, rows: 12, source: { format: 'png' } })
+      expect(image?.props.source).toHaveProperty('file', expect.stringContaining('/assets/frames/noConfig/000.png'))
+      expect(await buddy.find({ type: 'Raster' })).toBeUndefined()
+      blits.length = 0
+      await clock.advance(50)
+      expect(blits[blits.length - 1]).toMatchObject({ source: { format: 'png', file: expect.stringContaining('/assets/frames/noConfig/001.png') } })
+      await buddy.unmount()
+    })
+  }
+
+  test('tmux uses the readable fallback even when its parent terminal supports images', async ($, on) => {
+    fikaEnvironment(on, [], '', { TERM_PROGRAM: 'ghostty', TMUX: '/tmp/tmux-test,1,0' })
+    const buddy = await $.ui.mount({
+      plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage',
+      props: paneProps(64), viewport: { columns: 180, rows: 50 },
+    })
+    await expectBuddyVisible(buddy)
+    await buddy.unmount()
+  })
+
+  test('an image protocol refusal switches to colored cells instead of leaving only alt text', async ($, on) => {
+    const { clock, blits } = fikaEnvironment(on, [], '', { TERM_PROGRAM: 'ghostty' }, 'Image draws its alt: terminal has no image protocol')
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    const buddy = await $.ui.mount({
+      plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage',
+      props: paneProps(64), viewport: { columns: 180, rows: 50 },
+    })
+    expect(await buddy.find({ type: 'Image' })).toBeDefined()
+    await clock.advance(50)
+    await expectBuddyVisible(buddy)
+    await clock.advance(50)
+    expect(blits[blits.length - 1]).toHaveProperty('cells')
+    await buddy.unmount()
+  })
+})
+
+describe('Buddy rendering transitions', () => {
+  test('image support is tested even when the terminal reports an ordinary TERM name', async ($, on) => {
+    const { clock } = fikaEnvironment(on, [], '', { TERM: 'xterm-256color', MOCK_IMAGE_SUPPORT: '1' })
+    const buddy = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+    await clock.settle()
+    expect(await buddy.find({ type: 'Image' })).toBeDefined()
+    expect(await buddy.find({ type: 'Raster' })).toBeUndefined()
+    await buddy.unmount()
+  })
+
+  test('a probe before the native drawing is mounted retries on the frame clock', async ($, on) => {
+    const { clock, blits, setBlitResponse } = fikaEnvironment(on, [], '', { MOCK_IMAGE_SUPPORT: '1' })
+    let first = true
+    setBlitResponse(() => {
+      if (first) { first = false; return { deny: 'Nothing is mounted at this key yet' } }
+      return {}
+    })
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    const buddy = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+    await clock.settle()
+    expect(await buddy.find({ type: 'Image' })).toBeDefined()
+    await clock.advance(50)
+    expect(blits.length).toBeGreaterThan(1)
+    expect(await buddy.find({ type: 'Image' })).toBeDefined()
+    expect(await buddy.find({ type: 'Raster' })).toBeUndefined()
+    await buddy.unmount()
+  })
+
+  const states = [
+    { state: 'ok', percent: 0, turns: 0, cost: 0, working: false },
+    { state: 'work', percent: 0, turns: 0, cost: 0, working: true },
+    { state: 'done', percent: 0, turns: 1, cost: 0, working: false },
+    { state: 'error', percent: 95, turns: 0, cost: 0, working: false },
+    { state: 'update', percent: 80, turns: 0, cost: 0, working: false },
+    { state: 'noConfig', percent: 0, turns: 0, cost: null, working: false },
+  ] as const
+  for (const scenario of states) {
+    test(`native ${scenario.state} addresses every original pose, including the final pose and loop`, async ($, on) => {
+      const { clock, blits } = fikaEnvironment(on, [], '', { MOCK_IMAGE_SUPPORT: '1' })
+      const values: Record<string, unknown> = {
+        snapshot: { limits: [{ kind: 'five_hour', percentUsed: scenario.percent }], costUsd: scenario.cost },
+        turns: scenario.turns, isWorking: scenario.working,
+      }
+      on('state.get', { plugin: 'sth-usage', key: /^(snapshot|turns|isWorking)$/ }, (_, e) => ({ value: { value: values[e.key], version: 0 } }))
+      await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+      const buddy = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+      await clock.settle()
+      const count = buddyFrames[scenario.state].length
+      expect((await buddy.find({ type: 'Image' }))?.props.source).toHaveProperty('file', expect.stringContaining(`/assets/frames/${scenario.state}/000.png`))
+      blits.length = 0
+      for (let frame = 1; frame <= count; frame += 1) {
+        await clock.advance(50)
+        const last = blits[blits.length - 1]
+        expect(last).toHaveProperty('source', { format: 'png', file: expect.stringContaining(`/assets/frames/${scenario.state}/${String(frame % count).padStart(3, '0')}.png`) })
+      }
+      expect(blits).toHaveLength(count)
+      await buddy.unmount()
+    })
+  }
+
+  test('native Buddy plays all 270 Fika PNGs for nine seconds and returns to a native Buddy', async ($, on) => {
+    const { clock, blits } = fikaEnvironment(on, [], '', { MOCK_IMAGE_SUPPORT: '1', STH_FIKA_PREVIEW: '1' })
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    await clock.advance(2_000)
+    const buddy = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+    await clock.settle()
+    const initialKey = (await buddy.find({ type: 'Image' }))?.key
+    blits.length = 0
+    await buddy.press({ key: 'fika' })
+    await clock.settle()
+    const fikaKey = (await buddy.find({ type: 'Image' }))?.key
+    expect(fikaKey).toContain('buddy-image-fika-')
+    expect(fikaKey).not.toBe(initialKey)
+    expect(await buddy.find({ type: 'Raster' })).toBeUndefined()
+    for (let frame = 1; frame < 270; frame += 1) {
+      await clock.advance(1000 / 30)
+      expect(blits[blits.length - 1]).toMatchObject({ key: fikaKey, source: { format: 'png', file: expect.stringContaining(`/assets/fika/fika-${String(frame + 1).padStart(4, '0')}.png`) } })
+    }
+    const files = new Set(blits.filter(blit => 'source' in blit && 'file' in blit.source && blit.source.file.includes('/assets/fika/')).map(blit => 'source' in blit && 'file' in blit.source ? blit.source.file : ''))
+    expect(files.size).toBe(270)
+    await clock.advance(32)
+    expect(await buddy.find({ type: 'Image' })).toHaveProperty('key', fikaKey)
+    await clock.advance(2)
+    await clock.settle()
+    expect((await buddy.find({ type: 'Image' }))?.key).toBe(initialKey)
+    expect(await buddy.find({ type: 'Raster' })).toBeUndefined()
+    await buddy.unmount()
+  })
+
+  for (const native of [false, true]) {
+    test(`a delayed ${native ? 'native image' : 'portable raster'} rejection cannot cancel the following Fika scene`, async ($, on) => {
+      const { clock, blits, setBlitResponse } = fikaEnvironment(on, [], '', { STH_FIKA_PREVIEW: '1', ...(native ? { MOCK_IMAGE_SUPPORT: '1' } : {}) })
+      await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+      await clock.advance(2_000)
+      const buddy = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+      await clock.settle()
+      let rejectOne = true
+      setBlitResponse(async () => {
+        if (!rejectOne) return {}
+        rejectOne = false
+        await clock.sleep(100)
+        return { deny: 'The preceding drawing has another type or size' }
+      })
+      await clock.advance(native ? 50 : 100)
+      await buddy.press({ key: 'fika' })
+      await clock.settle()
+      const drawing = await buddy.find({ type: native ? 'Image' : 'Raster' })
+      expect(drawing?.key).toContain(native ? 'buddy-image-fika-' : 'buddy-raster-fika-')
+      blits.length = 0
+      await clock.advance(200)
+      expect(blits.filter(blit => blit.key === drawing?.key).length).toBeGreaterThan(1)
+      expect((await buddy.find({ type: native ? 'Image' : 'Raster' }))?.key).toBe(drawing?.key)
+      await buddy.unmount()
+    })
+  }
+
+  test('a refused Fika PNG falls back for that pane and continues through the last portable frame', async ($, on) => {
+    const { clock, blits, setBlitResponse } = fikaEnvironment(on, [], '', { MOCK_IMAGE_SUPPORT: '1', STH_FIKA_PREVIEW: '1' })
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    await clock.advance(2_000)
+    const buddy = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+    await clock.settle()
+    expect(await buddy.find({ type: 'Image' })).toBeDefined()
+    setBlitResponse(e => 'source' in e ? { deny: 'Image draws its alt: PNG could not be displayed' } : {})
+    await buddy.press({ key: 'fika' })
+    await clock.settle()
+    await expectOnlyBuddyPose(buddy, 'fika', 0)
+    const rasterKey = (await buddy.find({ type: 'Raster' }))?.key
+    blits.length = 0
+    await clock.advance(8_999)
+    expect(blits[blits.length - 1]).toMatchObject({ key: rasterKey })
+    expectRasterBlit(blits[blits.length - 1], terminalFika[terminalFika.length - 1], FIKA_COLUMNS, FIKA_ROWS)
+    expect(blits.filter(blit => 'cells' in blit)).toHaveLength(134)
+    await clock.advance(1)
+    await expectOnlyBuddyPose(buddy, 'noConfig')
+    expect(await buddy.find({ type: 'Image' })).toBeUndefined()
+    await buddy.unmount()
+  })
+
+  test('a desktop drawing cannot stop the same pane animated on the terminal', async ($, on) => {
+    const { clock, blits } = fikaEnvironment(on, [], '', { STH_FIKA_PREVIEW: '1' })
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    const terminal = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+    await clock.settle()
+    const desktop = await $.ui.mount({ plugin: 'sth-usage', surface: 'desktop', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+    blits.length = 0
+    await clock.advance(100)
+    expect(blits.filter(blit => blit.key.startsWith('buddy-raster-'))).toHaveLength(1)
+    await clock.advance(1_900)
+    await terminal.press({ key: 'fika' })
+    await clock.settle()
+    expect(await findFikaClient(desktop)).toBeDefined()
+    blits.length = 0
+    await clock.advance(67)
+    expect(blits[blits.length - 1]).toMatchObject({ key: expect.stringContaining('buddy-raster-fika-') })
+    expectRasterBlit(blits[blits.length - 1], terminalFika[1], FIKA_COLUMNS, FIKA_ROWS)
+    await terminal.unmount()
+    await desktop.unmount()
+  })
+
+  for (const size of [{ columns: 20, rows: 14 }, { columns: 10, rows: 8 }, { columns: 64, rows: 8 }]) {
+    test(`an inline pane of ${size.columns}×${size.rows} keeps the entire Buddy or offers enlargement`, async ($, on) => {
+      const { clock } = fikaEnvironment(on, [], '', { STH_FIKA_PREVIEW: '1' })
+      await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+      await clock.advance(2_000)
+      const props = { ...paneProps(size.columns), placement: 'inline' as const, scroll: { offset: 0, bodyRows: size.rows } }
+      const buddy = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props, viewport: { columns: size.columns, rows: 24 } })
+      await clock.settle()
+      const raster = await buddy.find({ type: 'Raster' })
+      if (raster) {
+        const columns = raster.props.columns as number
+        const rows = raster.props.rows as number
+        expect(columns).toBeLessThanOrEqual(size.columns - 2)
+        expect(rows + 5).toBeLessThanOrEqual(size.rows)
+        expectVisibleRaster(raster.props.cells, columns, rows)
+        await buddy.press({ key: 'fika' })
+        await clock.settle()
+        const fikaRaster = await buddy.find({ type: 'Raster' })
+        expect(fikaRaster?.props.columns).toBe(columns)
+        expect(fikaRaster?.props.rows).toBe(rows)
+        expectVisibleRaster(fikaRaster?.props.cells, columns, rows)
+      } else {
+        expect(await buddy.find({ type: 'Text', text: '[ H ]' })).toBeDefined()
+        expect(await buddy.find({ type: 'Button', key: 'buddy-enlarge' })).toBeDefined()
+      }
+      const caption = await buddy.find({ type: 'Text', text: /^Buddy (attend|fait)/ })
+      expect(caption?.props.wrap).toBe('truncate-end')
+      await buddy.unmount()
+    })
+  }
 })
 
 describe('Buddy desktop animation', () => {
@@ -202,11 +500,17 @@ function skillsView(isLinked: boolean): SkillsView {
   }
 }
 
-function stubEnvironment(on: On, isLinked: boolean) {
+function stubEnvironment(on: On, isLinked: boolean, variables: Readonly<Record<string, string>> = {}, imageDenial?: string) {
+  mock.env(on, { TERM: 'xterm-256color', TERM_PROGRAM: '', TMUX: '', ...variables })
   const calls: string[][] = []
   const blits: UiBlitArgs[] = []
   const values = new Map<string, unknown>([['skills', skillsView(isLinked)]])
   const clock = mock.clock(on, { now: 1_800_000_000_000 })
+  fixtureClock = clock
+  const imagesSupported = /ghostty/i.test(variables.TERM_PROGRAM ?? '') || /kitty/i.test(variables.TERM ?? '') || variables.MOCK_IMAGE_SUPPORT === '1'
+  let respondToBlit = (e: UiBlitArgs): Promise<{ deny?: string }> | { deny?: string } =>
+    'source' in e && (imageDenial || !imagesSupported)
+      ? { deny: imageDenial ?? 'Image draws its alt: terminal has no image protocol' } : {}
   // Keep core reads and writes, including subscriptions, and supply fixtures
   // only until the mod writes a key for the first time.
   on('state.get', { plugin: 'sth-usage' }, async (_, e, next) => {
@@ -237,17 +541,18 @@ function stubEnvironment(on: On, isLinked: boolean) {
     }
   })
   on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.cwd', () => ({ value: '/project' }))
   on('ui.toast', () => ({ value: undefined }))
-  on('ui.blit', (_, e) => {
+  on('ui.log', () => ({ value: undefined }))
+  on('ui.blit', async (_, e) => {
     blits.push(e)
-    return { value: {} }
+    return { value: await respondToBlit(e) }
   })
-  return { calls, values, clock, blits }
+  return { calls, values, clock, blits, setBlitResponse: (response: typeof respondToBlit) => { respondToBlit = response } }
 }
 
-function fikaEnvironment(on: On, initialMessages: SessionMessage[] = [], initialDraft = '', variables: Readonly<Record<string, string>> = {}) {
-  const environment = stubEnvironment(on, true)
-  mock.env(on, variables)
+function fikaEnvironment(on: On, initialMessages: SessionMessage[] = [], initialDraft = '', variables: Readonly<Record<string, string>> = {}, imageDenial?: string) {
+  const environment = stubEnvironment(on, true, variables, imageDenial)
   let draft = initialDraft
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', (_, e) => ({ value: { command: e.name } }))
@@ -338,16 +643,17 @@ for (const surface of SURFACES) {
       buddy = await mount()
       await expectOnlyBuddyPose(buddy, 'fika', 90)
       blits.length = 0
-      await clock.advance(34)
+      await clock.advance(surface === 'terminal' ? 67 : 34)
       if (surface === 'terminal') {
         const poses = blits.filter(blit => blit.requestId === 'sth-usage')
         expect(poses.length).toBeGreaterThan(0)
-        expect(poses[poses.length - 1]).toMatchObject({ key: 'buddy', cells: terminalFika[91] })
+        expect(poses[poses.length - 1]).toMatchObject({ key: expect.stringContaining('buddy-raster-fika-') })
+        expectRasterBlit(poses[poses.length - 1], terminalFika[Math.floor(92 * FIKA_RASTER_FPS / 30)], FIKA_COLUMNS, FIKA_ROWS)
       } else {
         await buddy.advance(34)
         await expectOnlyBuddyPose(buddy, 'fika', 91)
       }
-      await clock.advance(5_965)
+      await clock.advance(surface === 'terminal' ? 5_932 : 5_965)
       expect(await buddy.find({ type: 'Text', text: 'Fika à Stockholm' })).toBeDefined()
       expect(await buddy.find({ type: 'Button', key: 'fika' })).toBeUndefined()
       await clock.advance(1)
@@ -391,30 +697,33 @@ for (const surface of SURFACES) {
       expect(await findFikaClient(skills)).toBeUndefined()
       expect(await skills.find({ text: 'Fika à Stockholm' })).toBeUndefined()
       if (surface === 'terminal') {
-        expect(await skills.find({ type: 'Raster', key: 'buddy' })).toBeDefined()
+        await clock.settle()
+        expect(await skills.find({ type: 'Raster' })).toBeDefined()
       } else {
         expect(await skills.find({ type: 'Client', key: 'buddy-ok' })).toBeDefined()
       }
       await skills.unmount()
 
       blits.length = 0
-      await clock.advance(34)
+      await clock.advance(surface === 'terminal' ? 67 : 34)
       if (surface === 'terminal') {
         const poses = blits.filter(blit => blit.requestId === 'sth-usage')
         expect(poses.length).toBeGreaterThan(0)
-        expect(poses[poses.length - 1]).toMatchObject({ key: 'buddy', cells: terminalFika[1] })
+        expect(poses[poses.length - 1]).toMatchObject({ key: expect.stringContaining('buddy-raster-fika-') })
+        expectRasterBlit(poses[poses.length - 1], terminalFika[1], FIKA_COLUMNS, FIKA_ROWS)
       } else {
         await buddy.advance(34)
         await expectOnlyBuddyPose(buddy, 'fika', 1)
       }
 
       blits.length = 0
-      await clock.advance(8_965)
+      await clock.advance(surface === 'terminal' ? 8_932 : 8_965)
       expect(await buddy.find({ type: 'Text', text: 'Fika à Stockholm' })).toBeDefined()
       expect(await buddy.find({ type: 'Button', key: 'fika' })).toBeUndefined()
       if (surface === 'terminal') {
         const poses = blits.filter(blit => blit.requestId === 'sth-usage')
-        expect(poses[poses.length - 1]).toMatchObject({ key: 'buddy', cells: terminalFika[269] })
+        expect(poses[poses.length - 1]).toMatchObject({ key: expect.stringContaining('buddy-raster-fika-') })
+        expectRasterBlit(poses[poses.length - 1], terminalFika[terminalFika.length - 1], FIKA_COLUMNS, FIKA_ROWS)
       } else {
         await buddy.advance(8_933)
         await expectOnlyBuddyPose(buddy, 'fika', 269)
@@ -602,7 +911,7 @@ for (const surface of SURFACES) {
       await ui.press({ key: `remove-${RESOURCE}` })
       await ui.press({ key: `confirm-${RESOURCE}` })
       expect(calls.map(argv => argv.slice(1))).toEqual([
-        ['remove', RESOURCE, '--provider', 'github', '--json'],
+        ['remove', RESOURCE, '--provider', 'github', '--yes', '--json'],
         ['status', '--json'],
       ])
       expect(await ui.find({ key: `remove-${RESOURCE}` })).toBeUndefined()

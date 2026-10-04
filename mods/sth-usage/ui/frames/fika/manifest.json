@@ -13,15 +13,15 @@
     384
   ],
   "terminal_cells": [
-    24,
-    12
+    48,
+    24
   ],
   "quality": 75,
   "alpha_quality": 50,
   "desktop_modules": 24,
-  "terminal_modules": 24,
+  "terminal_modules": 13,
   "desktop_module_bytes": 2348854,
-  "terminal_module_bytes": 1246481,
+  "terminal_module_bytes": 889207,
   "max_webp_bytes": 6884,
   "transparent": true,
   "transparent_png_frames": 270,
@@ -44,7 +44,16 @@
       "graph_bytes": 8224471
     }
   ],
-  "ui_files": 62,
-  "ui_source_bytes_total": 8224471,
-  "ui_source_bytes_max": 869934
+  "ui_files": 52,
+  "ui_source_bytes_total": 7660433,
+  "ui_source_bytes_max": 869934,
+  "terminal_fps": 15,
+  "terminal_frames": 135,
+  "terminal_stride": 2,
+  "terminal_gamma": 0.75,
+  "terminal_codec": "BP1",
+  "terminal_source_size": [
+    96,
+    96
+  ]
 }

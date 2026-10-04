@@ -1,6 +1,7 @@
 {
   "name": "sth-usage",
-  "version": "0.1.1",
-  "description": "Buddy : suivi de consommation, skills STH et pause fika animée sans fond avant le premier prompt",
+  "version": "0.2.0",
+  "description": "Buddy : contexte, bilans et reprise de session, diagnostic du projet, skills STH et pause fika",
+  "author": { "name": "Skills Transfer Hub" },
   "types": "./types/index.d.ts"
 }
