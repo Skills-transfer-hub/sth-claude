@@ -1,6 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, Register, RenderInput } from 'claude-code'
 import type { CatalogSkill } from '../types'
+import { panelChrome, paneNavigation } from './presentation'
 
 export type ProjectView = {
   root: string
@@ -37,9 +38,9 @@ export function safeDiagnosticText(value: unknown): string {
   return value
     .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '')
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '')
-    .replace(/\b(?:sk-|lsk_live_|gh[pousr]_|glpat-)[A-Za-z0-9_-]+/g, '[secret masqué]')
-    .replace(/(https?:\/\/)[^\s/]+:[^\s/@]+@/g, '$1[identifiants masqués]@')
-    .replace(/\b((?:[A-Z_]*(?:TOKEN|SECRET|PASSWORD|API_KEY))\s*[=:]\s*)[^\s,;]+/gi, '$1[secret masqué]')
+    .replace(/\b(?:sk-|lsk_live_|gh[pousr]_|glpat-)[A-Za-z0-9_-]+/g, '[redacted]')
+    .replace(/(https?:\/\/)[^\s/]+:[^\s/@]+@/g, '$1[credentials hidden]@')
+    .replace(/\b((?:[A-Z_]*(?:TOKEN|SECRET|PASSWORD|API_KEY))\s*[=:]\s*)[^\s,;]+/gi, '$1[redacted]')
     .slice(0, 800)
 }
 
@@ -143,7 +144,7 @@ export function rankSkills(catalog: readonly CatalogSkill[], view: ProjectView):
   return catalog.map(skill => {
     const terms = `${skill.name} ${skill.folderName} ${skill.description}`.toLowerCase().split(/[^a-z0-9+#.]+/).filter(Boolean)
     const matches = view.stack.filter(stack => (MATCH_TERMS[stack] ?? [stack.toLowerCase()]).some(term => terms.includes(term)))
-    return { skill, reason: matches.length ? `Adapté à ${matches.join(', ')} (manifestes du projet)` : '', score: matches.length }
+    return { skill, reason: matches.length ? `Matches ${matches.join(', ')} (project manifests)` : '', score: matches.length }
   }).filter(row => row.score > 0)
     .sort((a, b) => b.score - a.score || a.skill.name.localeCompare(b.skill.name))
     .slice(0, 4)
@@ -161,10 +162,10 @@ async function probe($: EngineInterface, name: string, argv: readonly string[], 
     return {
       name, available: result.exitCode === 0,
       version: result.exitCode === 0 ? safeDiagnosticText(result.stdout || result.stderr).split('\n')[0]?.slice(0, 160) || null : null,
-      action: result.exitCode === 0 ? null : `Vérifier ${name} et son accès depuis le terminal de Claude Code.`,
+      action: result.exitCode === 0 ? null : `Check ${name} and its availability in the Claude Code terminal.`,
     }
   } catch {
-    return { name, available: false, version: null, action: `Installer ${name} ou vérifier son PATH, puis relancer /sth-doctor.` }
+    return { name, available: false, version: null, action: `Install ${name} or check its PATH, then run /sth-doctor again.` }
   }
 }
 
@@ -261,8 +262,8 @@ export async function refreshProject($: EngineInterface, full = true): Promise<P
             const result = await $.process.run([cli.cliBinary, 'doctor', '--json'], { cwd: root, timeoutMs: 30_000 })
             const parsed = parseDoctorChecks(result.stdout)
             if (parsed) checks = parsed
-            else message = 'Cette version de STH ne fournit pas un diagnostic JSON reconnu. Préparer un prompt pour examiner sth doctor.'
-          } catch { message = 'Diagnostic STH indisponible ou délai dépassé. Relancer /sth-doctor après vérification du terminal et du réseau.' }
+            else message = 'This STH version does not provide a recognized JSON diagnostic. Prepare a prompt to inspect sth doctor.'
+          } catch { message = 'STH diagnostics are unavailable or timed out. Check the terminal and network, then run /sth-doctor again.' }
         }
       }
       const previous = await read($, projectView)
@@ -272,7 +273,7 @@ export async function refreshProject($: EngineInterface, full = true): Promise<P
         dependencies, checks, mcp, message, busy: false, checkedAt: await $.clock.now(),
       }, epoch)
     } catch {
-      await setProject($, { busy: false, message: 'Impossible de lire le projet. Vérifier son dossier et les permissions du terminal.' }, epoch)
+      await setProject($, { busy: false, message: 'Unable to read the project. Check its directory and terminal permissions.' }, epoch)
     }
     return read($, projectView)
   })()
@@ -282,30 +283,41 @@ export async function refreshProject($: EngineInterface, full = true): Promise<P
 function externalLink($: EngineInterface, e: RenderInput<'Pane'>, href: string, label: string) {
   const { Link, Text } = $.ui.resolve(e)
   return e.surface === 'terminal'
-    ? <Link href={href}><Text color="blue" underline>{label}</Text></Link>
+    ? <Link href={href}><Text underline>{label}</Text></Link>
     : <Link href={href} label={label} />
 }
 
 export function InstallationGuide($: EngineInterface, e: RenderInput<'Pane'>, view: ProjectView) {
-  const { Box, Text, Button } = $.ui.resolve(e)
+  const { Box, Text } = $.ui.resolve(e)
+  const { Card, Button, Toolbar } = panelChrome($.ui.resolve(e), e)
   return (
-    <Box key="sth-installation-guide" flexDirection="column" gap={1}>
-      <Text bold>Installer STH</Text>
-      <Text>1. Dans votre terminal, choisissez votre système :</Text>
-      <Text bold>macOS / Linux avec Homebrew</Text>
-      <Text>brew install skills-transfer-hub/sth/sth</Text>
-      <Text bold>Windows avec Scoop</Text>
-      <Text>scoop bucket add sth https://github.com/Skills-transfer-hub/scoop-sth</Text>
-      <Text>scoop install sth</Text>
-      <Text dimColor>Autres gestionnaires Windows : winget install STH.STH · choco install sth</Text>
-      <Text>Sans gestionnaire : télécharger l'archive de votre système, vérifier SHA256SUMS et ajouter sth au PATH.</Text>
-      {externalLink($, e, RELEASES, 'Télécharger STH (releases officielles)')}
-      <Text>2. Vérifier : sth version</Text>
-      <Text>3. Dans votre projet : sth init, puis /sth-doctor dans Claude Code.</Text>
-      <Text dimColor>Si le binaire reste invisible, redémarrer le terminal de Claude Code pour recharger le PATH.</Text>
-      {externalLink($, e, DOCS, "Documentation officielle d'installation")}
-      {view.busy ? <Text dimColor>Vérification…</Text> : <Button key="sth-check-installation" label="Re-vérifier l'installation" onPress={() => refreshProject($, true).then(() => undefined)} />}
-    </Box>
+    <Card key="sth-installation-guide">
+      <Text bold>Install STH</Text>
+      <Text dimColor>1. Copy the appropriate command into your terminal.</Text>
+      <Box flexDirection="column">
+        <Text bold>macOS / Linux with Homebrew</Text>
+        <Text>brew install skills-transfer-hub/sth/sth</Text>
+      </Box>
+      <Box flexDirection="column">
+        <Text bold>Windows with Scoop</Text>
+        <Text>scoop bucket add sth https://github.com/Skills-transfer-hub/scoop-sth</Text>
+        <Text>scoop install sth</Text>
+        <Text dimColor>Other Windows package managers: winget install STH.STH · choco install sth</Text>
+      </Box>
+      <Box flexDirection="column">
+        <Text dimColor>Without a package manager: download the archive, verify SHA256SUMS and add sth to PATH.</Text>
+        {externalLink($, e, RELEASES, 'Download STH (official releases)')}
+      </Box>
+      <Box flexDirection="column">
+        <Text>2. Verify the installation: sth version</Text>
+        <Text>3. In your project: sth init, then /sth-doctor in Claude Code.</Text>
+        <Text dimColor>Still unable to find STH? Restart the Claude Code terminal to reload PATH.</Text>
+      </Box>
+      <Toolbar>
+        {view.busy ? <Text dimColor>Checking…</Text> : <Button key="sth-check-installation" label="Check installation again" onPress={() => refreshProject($, true).then(() => undefined)} />}
+        {externalLink($, e, DOCS, "Official installation guide")}
+      </Toolbar>
+    </Card>
   )
 }
 
@@ -313,27 +325,27 @@ export const renderInstallationGuide = InstallationGuide
 
 async function prepareDraft($: EngineInterface, text: string): Promise<void> {
   const result = await $.prompt.fill({ text, mode: 'replace' })
-  $.ui.toast(result.isFilled ? 'Brouillon préparé : relisez-le avant de l’envoyer.' : 'Brouillon indisponible sur cette surface.')
+  $.ui.toast(result.isFilled ? 'Draft prepared: review it before sending.' : 'Draft unavailable on this surface.')
 }
 
 export function doctorSummary(view: ProjectView): string {
   return [
-    `Projet : ${view.root || 'indisponible'}`,
-    `Stack : ${view.stack.join(', ') || 'aucun manifeste reconnu'}`,
-    `Tests disponibles (non exécutés) : ${view.testCommands.join(' ; ') || 'aucune commande détectée'}`,
-    `STH : ${view.cliStatus === 'missing' ? 'absent' : view.cliVersion ?? 'version non vérifiée'}`,
-    `Projet STH : ${view.linked ? `${view.providerCount} provider(s)` : 'à configurer avec sth init'}`,
-    ...view.dependencies.map(dep => `${dep.name} : ${dep.available ? dep.version ?? 'disponible' : 'indisponible'}${dep.action ? ` · ${dep.action}` : ''}`),
+    `Project: ${view.root || 'unavailable'}`,
+    `Stack: ${view.stack.join(', ') || 'no recognized manifest'}`,
+    `Available tests (not run): ${view.testCommands.join(' ; ') || 'no command detected'}`,
+    `STH: ${view.cliStatus === 'missing' ? 'missing' : view.cliVersion ?? 'unverified version'}`,
+    `STH project: ${view.linked ? `${view.providerCount} provider(s)` : 'configure with sth init'}`,
+    ...view.dependencies.map(dep => `${dep.name} : ${dep.available ? dep.version ?? 'available' : 'unavailable'}${dep.action ? ` · ${dep.action}` : ''}`),
     ...view.checks.map(check => `${check.status} · ${check.name} : ${check.detail}${check.action ? ` · ${check.action}` : ''}`),
-    `MCP : ${view.mcp.length ? view.mcp.map(server => `${safeDiagnosticText(server.name)} (${server.tools} outils, ${server.status === 'error' ? 'erreur observée' : 'disponibles'})`).join(', ') : 'aucun outil MCP exposé'}`,
-    'MCP : état déduit des outils exposés et des appels observés ; les connexions sans outils ne sont pas vérifiées.',
+    `MCP: ${view.mcp.length ? view.mcp.map(server => `${safeDiagnosticText(server.name)} (${server.tools} tools, ${server.status === 'error' ? 'observed error' : 'available'})`).join(', ') : 'no exposed MCP tools'}`,
+    'MCP: status inferred from exposed tools and observed calls; connections without tools are unverified.',
     ...(view.message ? [view.message] : []),
   ].join('\n')
 }
 
 export function registerProject(on: On): void {
   on('session.start', { isInteractive: [true, false] }, async ($, e, next) => {
-    await $.command.register({ name: 'sth-doctor', description: 'Diagnostic du projet, de STH et des outils MCP ; tests non exécutés' })
+    await $.command.register({ name: 'sth-doctor', description: 'Project, STH and MCP tool diagnostics; tests are not run' })
     void refreshProject($, false)
     return next(e)
   })
@@ -347,7 +359,7 @@ export function registerProject(on: On): void {
     return result
   })
   on('command.run', { command: 'sth-doctor' }, async $ => {
-    await $.ui.open({ id: PANE, title: 'Buddy · Diagnostic', focus: true })
+    await $.ui.open({ id: PANE, title: 'Buddy · Diagnostics', focus: true })
     return { text: doctorSummary(await refreshProject($, true)) }
   })
   on('ui.press', { plugin: 'sth-usage', element: /^(open-doctor|skills-doctor|sth-check-installation)$/, requestId: /^(sth-usage|sth-skills)$/ }, async ($, e, next) => {
@@ -364,7 +376,7 @@ export function registerProject(on: On): void {
         const isError = Boolean(result.deny || result.isError || nested?.isError)
         await update($, projectView, view => {
           const old = view.mcp.find(row => row.name === name)
-          const row: ProjectView['mcp'][number] = { name, tools: old?.tools ?? 0, status: isError ? 'error' : 'available', message: isError ? 'Le dernier appel a signalé une erreur. Vérifier /mcp et relancer cet appel.' : null }
+          const row: ProjectView['mcp'][number] = { name, tools: old?.tools ?? 0, status: isError ? 'error' : 'available', message: isError ? 'The last call reported an error. Check /mcp and retry the call.' : null }
           return { ...view, mcp: [...view.mcp.filter(row => row.name !== name), row] }
         })
         $.ui.invalidate('ui.render')
@@ -372,7 +384,7 @@ export function registerProject(on: On): void {
       return result
     } catch (failure) {
       if (name) {
-        await update($, projectView, view => ({ ...view, mcp: [...view.mcp.filter(row => row.name !== name), { name, tools: view.mcp.find(row => row.name === name)?.tools ?? 0, status: 'error' as const, message: 'Le dernier appel MCP a échoué. Vérifier /mcp.' }] }))
+        await update($, projectView, view => ({ ...view, mcp: [...view.mcp.filter(row => row.name !== name), { name, tools: view.mcp.find(row => row.name === name)?.tools ?? 0, status: 'error' as const, message: 'The last MCP call failed. Check /mcp.' }] }))
         $.ui.invalidate('ui.render')
       }
       throw failure
@@ -380,45 +392,77 @@ export function registerProject(on: On): void {
   })
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const view = await read($, projectView)
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const { Box, Text } = $.ui.resolve(e)
+    const { Page, Card, Button, Toolbar } = panelChrome($.ui.resolve(e), e)
     return (
-      <Box flexDirection="column" gap={1}>
-        <Text bold>Diagnostic du projet</Text>
-        <Text dimColor>{view.root || 'Lecture du projet…'}</Text>
-        <Text>Stack : {view.stack.join(' · ') || 'aucun manifeste reconnu'}</Text>
-        <Text dimColor>Sources : {view.evidence.join(', ') || 'à vérifier'}</Text>
-        {view.busy ? <Text dimColor>Diagnostic…</Text> : <Button key="doctor-refresh" label="Actualiser le diagnostic" onPress={() => refreshProject($, true).then(() => undefined)} />}
-        {view.message ? <Text color="yellow">{view.message}</Text> : null}
-        {view.cliStatus === 'missing' ? InstallationGuide($, e, view) : (
+      <Page>
+        {paneNavigation($.ui.resolve(e), e, PANE, pane => $.ui.open(pane))}
+        <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" gap={1}>
           <Box flexDirection="column">
-            <Text>STH : {view.cliVersion ?? (view.cliStatus === 'unknown' ? 'accès à vérifier' : 'version non vérifiée')}</Text>
-            <Text>{view.linked ? `${view.providerCount} provider(s) configuré(s)` : 'Projet STH à configurer'}</Text>
-            {!view.linked ? <Button key="doctor-configure" label="Configurer STH" onPress={() => $.ui.open({ id: 'sth-skills', title: 'Buddy · Skills', focus: true }).then(() => undefined)} /> : null}
+            <Text bold>Project diagnostics</Text>
+            <Text dimColor>Check the environment and prepare the next steps.</Text>
           </Box>
+          <Toolbar>
+            {view.busy ? <Text dimColor>Checking…</Text> : <Button key="doctor-refresh" label="Refresh diagnostics" variant="primary" onPress={() => refreshProject($, true).then(() => undefined)} />}
+          </Toolbar>
+        </Box>
+        {view.message ? <Text>{view.message}</Text> : null}
+        <Card>
+          <Text bold>Project</Text>
+          <Box flexDirection="column">
+            <Text dimColor>{view.root || 'Reading project…'}</Text>
+            <Text>Stack: {view.stack.join(' · ') || 'no recognized manifest'}</Text>
+            <Text dimColor>Sources: {view.evidence.join(', ') || 'to verify'}</Text>
+          </Box>
+        </Card>
+        {view.cliStatus === 'missing' ? InstallationGuide($, e, view) : (
+          <Card>
+            <Text bold>STH connection</Text>
+            <Box flexDirection="column">
+              <Text>STH: {view.cliVersion ?? (view.cliStatus === 'unknown' ? 'access to verify' : 'unverified version')}</Text>
+              <Text>{view.linked ? `${view.providerCount} configured provider(s)` : 'STH project needs setup'}</Text>
+            </Box>
+            {!view.linked ? <Button key="doctor-configure" label="Set up STH" onPress={() => $.ui.open({ id: 'sth-skills', title: 'Buddy · STH', focus: true }).then(() => undefined)} /> : null}
+          </Card>
         )}
-        <Text bold>Dépendances</Text>
-        {!view.dependencies.length ? <Text dimColor>Lancez le diagnostic pour vérifier les binaires du projet.</Text> : null}
-        {view.dependencies.map(dep => <Box key={`dependency-${dep.name}`} flexDirection="column">
-          <Text color={dep.available ? 'green' : 'yellow'}>{dep.name} : {dep.available ? dep.version ?? 'disponible' : 'indisponible'}</Text>
-          {dep.action ? <Text dimColor>{dep.action}</Text> : null}
-        </Box>)}
-        <Text bold>Tests · non exécutés par le diagnostic</Text>
-        {view.testCommands.length ? view.testCommands.map(command => <Text key={`test-${command}`}>{command}</Text>) : <Text dimColor>Aucune commande de test détectée dans les manifestes.</Text>}
-        <Button key="doctor-tests" label="Préparer un prompt de vérification" onPress={() => prepareDraft($, `Vérifie les changements du projet. ${view.testCommands.length ? `Les manifestes proposent : ${view.testCommands.join(' ; ')}. Choisis les vérifications adaptées et explique les résultats.` : 'Identifie d’abord les vérifications adaptées au projet et explique lesquelles tu peux lancer.'} Signale explicitement les tests non exécutés.`)} />
-        {view.checks.map((check, index) => <Box key={`check-${index}`} flexDirection="column">
-          <Text color={check.status === 'fail' ? 'yellow' : check.status === 'pass' ? 'green' : undefined}>{check.status === 'pass' ? 'OK' : check.status === 'fail' ? 'À corriger' : 'Non vérifié'} · {check.name}</Text>
-          <Text>{check.detail}</Text>
-          {check.action ? <Text dimColor>{check.action}</Text> : null}
-          {check.status === 'fail' ? <Button key={`remedy-${index}`} label="Préparer un diagnostic" onPress={() => prepareDraft($, `Le diagnostic STH signale : ${check.name}. Détail : ${check.detail}. Proposition du CLI : ${check.action ?? 'aucune'}. Examine le problème et propose une correction avant toute action destructive ou installation.`)} /> : null}
-        </Box>)}
-        <Text bold>Outils MCP</Text>
-        {view.mcp.length ? view.mcp.map(server => <Box key={`mcp-${server.name}`} flexDirection="column">
-          <Text color={server.status === 'error' ? 'yellow' : undefined}>{safeDiagnosticText(server.name)} : {server.tools} outils exposés{server.status === 'error' ? ' · erreur observée' : ''}</Text>
-          {server.message ? <Text dimColor>{server.message}</Text> : null}
-        </Box>) : <Text dimColor>Aucun outil MCP exposé dans cette session.</Text>}
-        <Text dimColor>Ces états reflètent les outils exposés et les appels observés. Les connexions sans outils ne sont pas vérifiées.</Text>
-        <Button key="doctor-mcp" label="Préparer un diagnostic MCP" onPress={() => prepareDraft($, 'Examine les erreurs MCP observées dans cette session et explique comment vérifier les connexions dans /mcp. Propose les corrections nécessaires.')} />
-      </Box>
+        <Card>
+          <Text bold>Dependencies</Text>
+          {!view.dependencies.length ? <Text dimColor>Refresh diagnostics to check the project binaries.</Text> : null}
+          <Box flexDirection="column">
+            {view.dependencies.map(dep => <Box key={`dependency-${dep.name}`} flexDirection="column">
+              <Text>{dep.name} : {dep.available ? dep.version ?? 'available' : 'unavailable'}</Text>
+              {dep.action ? <Text dimColor>{dep.action}</Text> : null}
+            </Box>)}
+          </Box>
+        </Card>
+        {view.checks.length > 0 && <Card>
+          <Text bold>STH checks</Text>
+          {view.checks.map((check, index) => <Box key={`check-${index}`} flexDirection="column">
+            <Text color={check.status === 'fail' ? 'red' : undefined}>{check.status === 'pass' ? 'OK' : check.status === 'fail' ? 'Needs attention' : 'Unverified'} · {check.name}</Text>
+            <Text>{check.detail}</Text>
+            {check.action ? <Text dimColor>{check.action}</Text> : null}
+            {check.status === 'fail' ? <Button key={`remedy-${index}`} label="Prepare diagnostics" onPress={() => prepareDraft($, `STH diagnostics report: ${check.name}. Details: ${check.detail}. CLI suggestion: ${check.action ?? 'none'}. Review the issue and suggest a fix before any destructive action or installation.`)} /> : null}
+          </Box>)}
+        </Card>}
+        <Card>
+          <Text bold>Tests · not run by diagnostics</Text>
+          <Box flexDirection="column">
+            {view.testCommands.length ? view.testCommands.map(command => <Text key={`test-${command}`}>{command}</Text>) : <Text dimColor>No test command found in the manifests.</Text>}
+          </Box>
+          <Button key="doctor-tests" label="Prepare a verification prompt" onPress={() => prepareDraft($, `Verify the project changes. ${view.testCommands.length ? `The manifests list: ${view.testCommands.join(' ; ')}. Choose appropriate checks and explain the results.` : 'First identify appropriate checks for the project and explain which ones you can run.'} Explicitly report any tests that were not run.`)} />
+        </Card>
+        <Card>
+          <Text bold>MCP tools</Text>
+          <Box flexDirection="column">
+            {view.mcp.length ? view.mcp.map(server => <Box key={`mcp-${server.name}`} flexDirection="column">
+              <Text color={server.status === 'error' ? 'red' : undefined}>{safeDiagnosticText(server.name)} : {server.tools} exposed tools{server.status === 'error' ? ' · observed error' : ''}</Text>
+              {server.message ? <Text dimColor>{server.message}</Text> : null}
+            </Box>) : <Text dimColor>No exposed MCP tools in this session.</Text>}
+          </Box>
+          <Text dimColor>Status based on exposed tools and observed calls. Connections without tools are unverified.</Text>
+          <Button key="doctor-mcp" label="Prepare MCP diagnostics" onPress={() => prepareDraft($, 'Review the MCP errors observed in this session and explain how to check the connections in /mcp. Suggest any necessary fixes.')} />
+        </Card>
+      </Page>
     )
   })
 }

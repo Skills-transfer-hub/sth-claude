@@ -113,7 +113,7 @@ describe('Read-only project diagnosis', () => {
     expect(calls).toEqual([['sth', 'version'], ['git', '--version'], ['node', '--version'], ['npm', '--version'], ['sth', 'doctor', '--json']])
     expect(reads.some(file => /\.env|credential|secret/.test(file))).toBe(false)
     expect(doctorSummary(view)).not.toContain('never display this')
-    expect(doctorSummary(view)).toContain('non exécutés')
+    expect(doctorSummary(view)).toContain('not run')
     await ui.unmount()
   })
 
@@ -142,7 +142,7 @@ describe('Read-only project diagnosis', () => {
 })
 
 function paneProps(): RenderPropsOf['Pane'] {
-  return { title: 'Diagnostic', isFocused: true, bodyColumns: 64, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} }
+  return { title: 'Diagnostics', isFocused: true, bodyColumns: 64, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} }
 }
 
 for (const surface of ['terminal', 'desktop'] as const) {

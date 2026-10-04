@@ -411,7 +411,7 @@ describe('Buddy rendering transitions', () => {
         expect(await buddy.find({ type: 'Text', text: '[ H ]' })).toBeDefined()
         expect(await buddy.find({ type: 'Button', key: 'buddy-enlarge' })).toBeDefined()
       }
-      const caption = await buddy.find({ type: 'Text', text: /^Buddy (attend|fait)/ })
+      const caption = await buddy.find({ type: 'Text', text: /^Buddy is (waiting|taking)/ })
       expect(caption?.props.wrap).toBe('truncate-end')
       await buddy.unmount()
     })
@@ -540,6 +540,8 @@ function stubEnvironment(on: On, isLinked: boolean, variables: Readonly<Record<s
       },
     }
   })
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.close', () => ({ value: undefined }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.cwd', () => ({ value: '/project' }))
   on('ui.toast', () => ({ value: undefined }))
@@ -654,7 +656,7 @@ for (const surface of SURFACES) {
         await expectOnlyBuddyPose(buddy, 'fika', 91)
       }
       await clock.advance(surface === 'terminal' ? 5_932 : 5_965)
-      expect(await buddy.find({ type: 'Text', text: 'Fika à Stockholm' })).toBeDefined()
+      expect(await buddy.find({ type: 'Text', text: 'Fika in Stockholm' })).toBeDefined()
       expect(await buddy.find({ type: 'Button', key: 'fika' })).toBeUndefined()
       await clock.advance(1)
       await expectOnlyBuddyPose(buddy, 'noConfig')
@@ -685,17 +687,17 @@ for (const surface of SURFACES) {
       expect(await buddy.find({ type: 'Button', key: 'fika' })).toBeDefined()
       const skills = await mount('sth-skills')
       expect(await skills.find({ key: 'buddy-fika' })).toBeUndefined()
-      expect(await skills.find({ text: 'Fika ?' })).toBeUndefined()
+      expect(await skills.find({ text: 'Fika?' })).toBeUndefined()
 
       await buddy.press({ key: 'fika' })
       await expectOnlyBuddyPose(buddy, 'fika', 0)
       const firstPlaybackKey = (await findFikaClient(buddy))?.key
       if (surface === 'desktop') expect(firstPlaybackKey).toBeDefined()
-      expect(await buddy.find({ type: 'Text', text: 'Fika à Stockholm' })).toBeDefined()
+      expect(await buddy.find({ type: 'Text', text: 'Fika in Stockholm' })).toBeDefined()
       expect(await buddy.find({ type: 'Button', key: 'fika' })).toBeUndefined()
       expect(await skills.find({ key: 'buddy-fika' })).toBeUndefined()
       expect(await findFikaClient(skills)).toBeUndefined()
-      expect(await skills.find({ text: 'Fika à Stockholm' })).toBeUndefined()
+      expect(await skills.find({ text: 'Fika in Stockholm' })).toBeUndefined()
       if (surface === 'terminal') {
         await clock.settle()
         expect(await skills.find({ type: 'Raster' })).toBeDefined()
@@ -718,7 +720,7 @@ for (const surface of SURFACES) {
 
       blits.length = 0
       await clock.advance(surface === 'terminal' ? 8_932 : 8_965)
-      expect(await buddy.find({ type: 'Text', text: 'Fika à Stockholm' })).toBeDefined()
+      expect(await buddy.find({ type: 'Text', text: 'Fika in Stockholm' })).toBeDefined()
       expect(await buddy.find({ type: 'Button', key: 'fika' })).toBeUndefined()
       if (surface === 'terminal') {
         const poses = blits.filter(blit => blit.requestId === 'sth-usage')
@@ -735,7 +737,7 @@ for (const surface of SURFACES) {
       expect(await buddy.find({ type: 'Button', key: 'fika' })).toBeDefined()
       expect(await buddy.find({ key: 'fika-scene' })).toBeUndefined()
       expect(await findFikaClient(buddy)).toBeUndefined()
-      expect(await buddy.find({ text: 'Fika à Stockholm' })).toBeUndefined()
+      expect(await buddy.find({ text: 'Fika in Stockholm' })).toBeUndefined()
 
       await clock.advance(150)
       await buddy.press({ key: 'fika' })
@@ -874,9 +876,9 @@ for (const surface of SURFACES) {
         props: paneProps(64), viewport: { columns: 180, rows: 50 },
       })
 
-      expect(await ui.find({ key: `remove-${RESOURCE}` })).toBeDefined()
+      expect(await ui.find({ key: `remove-github-${RESOURCE}` })).toBeDefined()
       await ui.press({ key: 'tab-catalog' })
-      expect(await ui.find({ key: `remove-${RESOURCE}` })).toBeUndefined()
+      expect(await ui.find({ key: `remove-github-${RESOURCE}` })).toBeUndefined()
       expect(await ui.find({ key: 'install-github-team::guides/typescript' })).toBeDefined()
       expect(await ui.find({ key: 'install-github-team::guides/accessibility' })).toBeDefined()
       await ui.input({ key: 'filter', text: 'clavier', kind: 'change' })
@@ -885,7 +887,7 @@ for (const surface of SURFACES) {
       expect(await ui.find({ type: 'Text', text: /Des composants utilisables au clavier\./ })).toBeDefined()
 
       await ui.press({ key: 'tab-installed' })
-      expect(await ui.find({ key: `remove-${RESOURCE}` })).toBeDefined()
+      expect(await ui.find({ key: `remove-github-${RESOURCE}` })).toBeDefined()
       expect(await ui.find({ key: 'filter' })).toBeUndefined()
       await ui.press({ key: 'tab-catalog' })
       expect((await ui.find({ key: 'filter' }))?.props.value).toBe('clavier')
@@ -900,26 +902,26 @@ for (const surface of SURFACES) {
         props: paneProps(32), viewport: { columns: 180, rows: 50 },
       })
 
-      await ui.press({ key: `remove-${RESOURCE}` })
-      expect(await ui.find({ key: `confirm-${RESOURCE}` })).toBeDefined()
+      await ui.press({ key: `remove-github-${RESOURCE}` })
+      expect(await ui.find({ key: `confirm-github-${RESOURCE}` })).toBeDefined()
       expect(calls).toHaveLength(0)
-      await ui.press({ key: `cancel-${RESOURCE}` })
-      expect(await ui.find({ key: `confirm-${RESOURCE}` })).toBeUndefined()
-      expect(await ui.find({ key: `remove-${RESOURCE}` })).toBeDefined()
+      await ui.press({ key: `cancel-github-${RESOURCE}` })
+      expect(await ui.find({ key: `confirm-github-${RESOURCE}` })).toBeUndefined()
+      expect(await ui.find({ key: `remove-github-${RESOURCE}` })).toBeDefined()
       expect(calls).toHaveLength(0)
 
-      await ui.press({ key: `remove-${RESOURCE}` })
-      await ui.press({ key: `confirm-${RESOURCE}` })
+      await ui.press({ key: `remove-github-${RESOURCE}` })
+      await ui.press({ key: `confirm-github-${RESOURCE}` })
       expect(calls.map(argv => argv.slice(1))).toEqual([
         ['remove', RESOURCE, '--provider', 'github', '--yes', '--json'],
         ['status', '--json'],
       ])
-      expect(await ui.find({ key: `remove-${RESOURCE}` })).toBeUndefined()
-      expect(await ui.find({ key: `confirm-${RESOURCE}` })).toBeUndefined()
+      expect(await ui.find({ key: `remove-github-${RESOURCE}` })).toBeUndefined()
+      expect(await ui.find({ key: `confirm-github-${RESOURCE}` })).toBeUndefined()
       await ui.unmount()
     })
 
-    test('usage bars fit the pane independently of the wider viewport', async ($, on) => {
+    test('usage measures stay single and readable in a narrow right pane', async ($, on) => {
       const { values } = stubEnvironment(on, true)
       values.set('snapshot', {
         limits: [{ kind: 'five_hour', percentUsed: 80 }], costUsd: 0.125,
@@ -929,13 +931,21 @@ for (const surface of SURFACES) {
         props: paneProps(20), viewport: { columns: 180, rows: 50 },
       })
 
-      const narrowBars = await ui.findAll({ type: 'Text', text: /^[█░]+$/ })
-      expect(narrowBars).toHaveLength(1)
-      expect(narrowBars[0]!.text.length).toBeLessThanOrEqual(20)
+      const quota = await ui.find({ key: 'status-quota-five_hour' })
+      expect(quota?.text).toContain('5 h 80 %')
+      expect(await ui.findAll({ key: 'status-quota-five_hour' })).toHaveLength(1)
+      expect(await ui.findAll({ key: 'workflow-actions' })).toHaveLength(1)
+      expect(await ui.find({ key: 'open-doctor' })).toBeUndefined()
+      expect(await ui.find({ key: 'open-resume' })).toBeUndefined()
       await ui.redraw(paneProps(64))
-      const wideBars = await ui.findAll({ type: 'Text', text: /^[█░]+$/ })
-      expect(wideBars).toHaveLength(1)
-      expect(wideBars[0]!.text.length).toBeGreaterThan(narrowBars[0]!.text.length)
+      expect(await ui.findAll({ key: 'status-quota-five_hour' })).toHaveLength(1)
+      if (surface === 'desktop') {
+        const pills = (await ui.findAll({ type: 'Svg' })).filter(image => String(image.props.alt).includes('80 % used'))
+        expect(pills).toHaveLength(1)
+        expect(pills[0]!.props.width).toBeLessThanOrEqual(180)
+      } else {
+        expect((await ui.find({ key: 'status-quota-five_hour' }))?.text).toContain('5 h 80 %')
+      }
       await ui.unmount()
     })
   })

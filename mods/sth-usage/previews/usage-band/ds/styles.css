@@ -1,0 +1,10 @@
+/* ============================================================================
+   STH Design System — global entry point.
+   Consumers link THIS file only. It is a manifest of @imports; no rules live
+   here directly. Order matters: fonts → tokens → base element styles.
+   ============================================================================ */
+@import "./tokens/fonts.css";
+@import "./tokens/colors.css";
+@import "./tokens/typography.css";
+@import "./tokens/spacing.css";
+@import "./tokens/base.css";

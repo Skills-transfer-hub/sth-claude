@@ -1,7 +1,7 @@
 {
   "name": "sth-usage",
-  "version": "0.2.0",
-  "description": "Buddy : contexte, bilans et reprise de session, diagnostic du projet, skills STH et pause fika",
+  "version": "0.3.0",
+  "description": "Buddy: context, session summaries and resume, project diagnostics, STH skills and fika breaks",
   "author": { "name": "Skills Transfer Hub" },
   "types": "./types/index.d.ts"
 }

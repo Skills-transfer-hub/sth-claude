@@ -2,9 +2,11 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderInput, Timer } from 'claude-code'
 import { isPromptText, isUserPrompt } from './fika'
 import { terminalRaster } from './terminal-raster'
-import { registerContext } from './context'
+import { EMPTY_CONTEXT, registerContext, statusPills, usagePillElement } from './context'
 import { activityCaption, activityBuddyState, registerActivity } from './activity'
 import { EMPTY_PROJECT, rankSkills, registerProject } from './project'
+import { panelChrome, paneNavigation } from './presentation'
+import { PLUGIN_VERSION } from './version'
 import terminalOk from '../ui/terminal-frames/ok'
 import terminalWork from '../ui/terminal-frames/work'
 import terminalDone from '../ui/terminal-frames/done'
@@ -59,19 +61,19 @@ const ALERT_THRESHOLDS = [80, 95]
 type BuddyState = 'ok' | 'work' | 'done' | 'update' | 'error' | 'noConfig'
 
 const BUDDY_CAPTIONS: Record<BuddyState, string> = {
-  ok: 'Buddy est prêt',
-  work: 'Buddy travaille…',
-  done: 'Buddy a fini le tour',
-  update: 'Buddy surveille les limites',
-  error: 'Buddy freine : limite proche',
-  noConfig: 'Buddy attend le premier tour',
+  ok: 'Buddy is ready',
+  work: 'Buddy is working…',
+  done: 'Buddy has finished the turn',
+  update: 'Buddy is watching the limits',
+  error: 'Buddy is slowing down: limit approaching',
+  noConfig: 'Buddy is waiting for the first turn',
 }
 
 const WINDOW_LABELS: Record<string, string> = {
-  five_hour: 'Fenêtre 5 h',
-  seven_day: 'Semaine (7 j)',
-  seven_day_opus: 'Semaine Opus',
-  seven_day_sonnet: 'Semaine Sonnet',
+  five_hour: '5-hour window',
+  seven_day: 'Week (7 d)',
+  seven_day_opus: 'Opus week',
+  seven_day_sonnet: 'Sonnet week',
   spend_limit: 'Budget',
 }
 
@@ -110,6 +112,7 @@ const DEFAULT_INIT_DRAFT: InitDraft = {
 const initDraft = atom({ plugin: 'sth-usage', key: 'initDraft' } as const, DEFAULT_INIT_DRAFT)
 const initAdvanced = atom({ plugin: 'sth-usage', key: 'initAdvanced' } as const, false)
 const skillsTab = atom({ plugin: 'sth-usage', key: 'skillsTab' } as const, 'installed')
+const moreMenuOpen = atom({ plugin: 'sth-usage', key: 'moreMenuOpen' } as const, false)
 
 // The mod compiler resolves state references within each hooks file.
 const activityView = atom({ plugin: 'sth-usage', key: 'activityView' } as const, {
@@ -117,6 +120,7 @@ const activityView = atom({ plugin: 'sth-usage', key: 'activityView' } as const,
   last: null, resume: null, message: null, testsRunning: false, testCommand: null,
 } satisfies ActivityView)
 const projectView = atom({ plugin: 'sth-usage', key: 'projectView' } as const, EMPTY_PROJECT)
+const contextView = atom({ plugin: 'sth-usage', key: 'contextView' } as const, EMPTY_CONTEXT)
 
 const FIKA_DELAY_MS = 120_000
 const FIKA_HD_FPS = 30
@@ -220,28 +224,6 @@ function usd(value: number): string {
   return `$${value.toFixed(value < 1 ? 3 : 2)}`
 }
 
-function progressBar(percent: number, width: number): string {
-  const filled = Math.max(0, Math.min(width, Math.round((percent / 100) * width)))
-  return '█'.repeat(filled) + '░'.repeat(width - filled)
-}
-
-function limitColor(percent: number): string | undefined {
-  if (percent >= 90) return 'red'
-  if (percent >= 75) return 'yellow'
-  return 'green'
-}
-
-function resetIn(resetsAt: string | undefined, nowMs: number): string {
-  if (!resetsAt) return ''
-  const remainingMinutes = Math.max(0, Math.round((Date.parse(resetsAt) - nowMs) / 60_000))
-  const days = Math.floor(remainingMinutes / 1440)
-  const hours = Math.floor((remainingMinutes % 1440) / 60)
-  const minutes = remainingMinutes % 60
-  if (days > 0) return `reset dans ${days} j ${hours} h`
-  if (hours > 0) return `reset dans ${hours} h ${String(minutes).padStart(2, '0')}`
-  return `reset dans ${minutes} min`
-}
-
 function highestPercent(limits: LimitWindow[]): number {
   return limits.reduce((highest, limit) => Math.max(highest, limit.percentUsed), 0)
 }
@@ -258,7 +240,7 @@ function buddyState(working: boolean, current: UsageSnapshot, turnCount: number)
 function statusText(current: UsageSnapshot, totals: TokenTotals): string {
   if (current.limits.length > 0) {
     const windows = current.limits
-      .map(limit => `${limit.kind === 'five_hour' ? '5h' : limit.kind === 'seven_day' ? '7j' : windowLabel(limit.kind)} ${Math.round(limit.percentUsed)}%`)
+      .map(limit => `${limit.kind === 'five_hour' ? '5h' : limit.kind === 'seven_day' ? '7d' : windowLabel(limit.kind)} ${Math.round(limit.percentUsed)}%`)
       .join(' · ')
     return `Buddy ${windows}`
   }
@@ -289,7 +271,7 @@ async function alertOnThresholds($: EngineInterface, current: UsageSnapshot): Pr
       const alertKey = `${limit.kind}:${limit.resetsAt ?? ''}:${threshold}`
       if (limit.percentUsed >= threshold && !already.includes(alertKey)) {
         fresh.push(alertKey)
-        $.ui.toast(`Buddy : ${windowLabel(limit.kind)} à ${Math.round(limit.percentUsed)} %`)
+        $.ui.toast(`Buddy: ${windowLabel(limit.kind)} at ${Math.round(limit.percentUsed)} %`)
       }
     }
   }
@@ -403,7 +385,7 @@ async function buddyElement(
       terminalBuddies.delete(requestId)
       return <Box key="buddy-compact" flexDirection="column" alignItems="center">
         <Text bold>[ H ]</Text>
-        <Button key="buddy-enlarge" label="Agrandir" plain onPress={() => $.ui.open({ id: requestId, rows: 36, columns: 50, focus: true })} />
+        <Button key="buddy-enlarge" label="Enlarge" plain onPress={() => $.ui.open({ id: requestId, rows: 36, columns: 50, focus: true })} />
       </Box>
     }
     const key = `buddy-${image ? 'image' : 'raster'}-${fikaFrame !== null ? `fika-${fikaStartedAt}` : state}-${size.columns}x${size.rows}`
@@ -459,15 +441,15 @@ async function animateTerminalFika($: EngineInterface): Promise<void> {
   }
 }
 
-function dashboardLink($: EngineInterface, e: RenderInput<'Pane'>, label = 'Dashboard STH') {
+function dashboardLink($: EngineInterface, e: RenderInput<'Pane'>, label = 'STH dashboard') {
   const { Box, Text, Link } = $.ui.resolve(e)
   if (e.surface === 'terminal') {
     return (
       <Box flexDirection="column">
         <Link href={STH_SITE}>
-          <Text color="blue" bold underline>↗ Ouvrir le dashboard STH</Text>
+          <Text bold underline>↗ Open the STH dashboard</Text>
         </Link>
-        <Text dimColor>skillsth.com · lien externe</Text>
+        <Text dimColor>skillsth.com · external link</Text>
       </Box>
     )
   }
@@ -475,23 +457,24 @@ function dashboardLink($: EngineInterface, e: RenderInput<'Pane'>, label = 'Dash
 }
 
 function sthInstallationGuide($: EngineInterface, e: RenderInput<'Pane'>) {
-  const { Box, Text, Button, Link } = $.ui.resolve(e)
+  const { Box, Text, Link } = $.ui.resolve(e)
+  const { Button } = panelChrome($.ui.resolve(e), e)
   const docs = 'https://github.com/Skills-transfer-hub/sth-releases/blob/main/README.md'
   return (
     <Box key="sth-installation-guide" flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
-      <Text bold>Installer STH</Text>
-      <Text>Le CLI STH est introuvable. Installe-le dans ton terminal, puis vérifie son accès.</Text>
-      <Text bold>macOS / Linux avec Homebrew</Text>
+      <Text bold>Install STH</Text>
+      <Text>The STH CLI was not found. Install it in your terminal, then check that it is available.</Text>
+      <Text bold>macOS / Linux with Homebrew</Text>
       <Text>brew install skills-transfer-hub/sth/sth</Text>
-      <Text bold>Windows avec Scoop</Text>
+      <Text bold>Windows with Scoop</Text>
       <Text>scoop bucket add sth https://github.com/Skills-transfer-hub/scoop-sth</Text>
       <Text>scoop install sth</Text>
-      <Text dimColor>Alternative Windows : winget install STH.STH</Text>
-      <Text bold>Vérifier</Text>
+      <Text dimColor>Windows alternative: winget install STH.STH</Text>
+      <Text bold>Verify</Text>
       <Text>sth version</Text>
-      <Text dimColor>Sans gestionnaire de paquets : télécharge l’archive adaptée à ton système depuis les releases officielles, ajoute le binaire au PATH puis rouvre ton terminal.</Text>
-      {e.surface === 'terminal' ? <Link href={docs}><Text color="blue" underline>Documentation d’installation STH</Text></Link> : <Link href={docs} label="Documentation d’installation STH" />}
-      <Button key="sth-check-installation" label="Vérifier l’installation" onPress={() => $.ui.open({ id: 'sth-doctor', title: 'Buddy · Diagnostic', focus: true })} />
+      <Text dimColor>Without a package manager: download the archive for your system from the official releases, add the binary to PATH, then reopen your terminal.</Text>
+      {e.surface === 'terminal' ? <Link href={docs}><Text underline>STH installation guide</Text></Link> : <Link href={docs} label="STH installation guide" />}
+      <Button key="sth-check-installation" label="Check installation" onPress={() => $.ui.open({ id: 'sth-doctor', title: 'Buddy · Diagnostics', focus: true })} />
     </Box>
   )
 }
@@ -500,14 +483,14 @@ function fikaThought($: EngineInterface, e: RenderInput<'Pane'>, visible: boolea
   if (!visible || (e.surface !== 'terminal' && e.surface !== 'desktop')) return null
   const { Box, Text, Button } = $.ui.resolve(e)
   if (compactBuddyHeader(e)) return <Box key="buddy-fika" alignItems="center">
-    {playing ? <Text wrap="truncate-end">Fika à Stockholm</Text> : <Button key="fika" label="Fika ?" plain onPress={() => playFika($)} />}
+    {playing ? <Text wrap="truncate-end">Fika in Stockholm</Text> : <Button key="fika" label="Fika?" plain onPress={() => playFika($)} />}
   </Box>
   return (
     <Box key="buddy-fika" flexDirection="column" alignItems="center">
       <Box borderStyle="round" borderDimColor paddingX={1}>
         {playing
-          ? <Text>Fika à Stockholm</Text>
-          : <Button key="fika" label="Fika ?" plain onPress={() => playFika($)} />}
+          ? <Text>Fika in Stockholm</Text>
+          : <Button key="fika" label="Fika?" plain onPress={() => playFika($)} />}
       </Box>
       <Text dimColor>•</Text>
       <Text dimColor>·</Text>
@@ -536,7 +519,7 @@ async function runSth(
   input: SthInput = {},
 ): Promise<SthRun> {
   const candidates = sthBinary ? [sthBinary, ...STH_CANDIDATES.filter(candidate => candidate !== sthBinary)] : STH_CANDIDATES
-  let lastFailure = 'sth introuvable (PATH, /opt/homebrew/bin, /usr/local/bin)'
+  let lastFailure = 'sth not found (PATH, /opt/homebrew/bin, /usr/local/bin)'
   for (const candidate of candidates) {
     try {
       const result = await $.process.run([candidate, ...args], {
@@ -580,19 +563,18 @@ function skillLabel(resourceName: string): string {
   return resourceName.split('::').slice(1).join('/') || resourceName
 }
 
-function statusColor(status: string): string | undefined {
-  if (status === 'up-to-date') return 'green'
-  if (status === 'outdated') return 'yellow'
-  if (status.includes('modified')) return 'magenta'
-  return undefined
+function statusSeverity(status: string): number {
+  if (status === 'up-to-date') return 0
+  if (status === 'outdated') return 1
+  return status === 'missing' ? 3 : 2
 }
 
 function skillStatus(status: string): string {
-  if (status === 'up-to-date') return 'À jour'
-  if (status === 'outdated') return 'Mise à jour disponible'
-  if (status.includes('modified')) return 'Modifié localement'
-  if (status === 'missing') return 'Fichier manquant'
-  if (status === 'unknown-baseline') return 'Intégrité non vérifiée'
+  if (status === 'up-to-date') return 'Up to date'
+  if (status === 'outdated') return 'Update available'
+  if (status.includes('modified')) return 'Locally modified'
+  if (status === 'missing') return 'Missing file'
+  if (status === 'unknown-baseline') return 'Integrity not verified'
   return status
 }
 
@@ -635,7 +617,7 @@ async function refreshInstalled($: EngineInterface, duringAction = false): Promi
   if (!duringAction && skillsOperationEpoch === epoch) return false
   if (!duringAction) {
     skillsOperationEpoch = epoch
-    await setSkills($, { busy: 'Vérification des skills…', message: null, isError: false }, epoch)
+    await setSkills($, { busy: 'Checking skills…', message: null, isError: false }, epoch)
   }
   try {
     const root = await $.session.cwd()
@@ -646,11 +628,11 @@ async function refreshInstalled($: EngineInterface, duringAction = false): Promi
       { resource_name: string; provider_id: string; status: string; pinned: boolean; installed_version?: string; latest_version?: string }[]
     >(result.stdout)
     if (!result.isOk || !Array.isArray(rows)) {
-      await setSkills($, { message: failureText(result, 'sth status a échoué'), isError: true }, epoch)
+      await setSkills($, { message: failureText(result, 'sth status failed'), isError: true }, epoch)
       return false
     }
     if (rows.some(row => !row || typeof row.resource_name !== 'string' || typeof row.provider_id !== 'string' || typeof row.status !== 'string' || typeof row.pinned !== 'boolean')) {
-      await setSkills($, { message: 'Réponse de sth status invalide : les skills installés sont conservés.', isError: true }, epoch)
+      await setSkills($, { message: 'Invalid sth status response: the installed skills list has been preserved.', isError: true }, epoch)
       return false
     }
     const installed: InstalledSkill[] = rows.map(row => ({
@@ -661,7 +643,20 @@ async function refreshInstalled($: EngineInterface, duringAction = false): Promi
       installedVersion: typeof row.installed_version === 'string' ? row.installed_version : undefined,
       latestVersion: typeof row.latest_version === 'string' ? row.latest_version : undefined,
     }))
-    await setSkills($, { installed, message: null, isError: false }, epoch)
+    const byResource = new Map<string, InstalledSkill>()
+    for (const skill of installed) {
+      const identity = `${skill.providerId}:${skill.resourceName}`
+      const previous = byResource.get(identity)
+      if (!previous) byResource.set(identity, skill)
+      else byResource.set(identity, {
+        ...previous,
+        status: statusSeverity(skill.status) > statusSeverity(previous.status) ? skill.status : previous.status,
+        isPinned: previous.isPinned || skill.isPinned,
+        installedVersion: previous.installedVersion === skill.installedVersion ? skill.installedVersion : undefined,
+        latestVersion: previous.latestVersion === skill.latestVersion ? skill.latestVersion : undefined,
+      })
+    }
+    await setSkills($, { installed: [...byResource.values()], message: null, isError: false }, epoch)
     return true
   } finally {
     if (!duringAction) {
@@ -678,7 +673,7 @@ async function loadCatalog($: EngineInterface): Promise<void> {
   try {
     const root = await $.session.cwd()
     if (epoch !== skillsEpoch) return
-    await setSkills($, { busy: 'Chargement du catalogue…', message: null, isError: false }, epoch)
+    await setSkills($, { busy: 'Loading catalog…', message: null, isError: false }, epoch)
     if (epoch !== skillsEpoch) return
     const result = await runSth($, ['list', '--json'], 120_000, { cwd: root })
     if (epoch !== skillsEpoch) return
@@ -696,11 +691,11 @@ async function loadCatalog($: EngineInterface): Promise<void> {
       }[]
     >(result.stdout)
     if (!result.isOk || !Array.isArray(rows)) {
-      await setSkills($, { busy: null, message: failureText(result, 'sth list a échoué'), isError: true }, epoch)
+      await setSkills($, { busy: null, message: failureText(result, 'sth list failed'), isError: true }, epoch)
       return
     }
     if (rows.some(row => !row || typeof row.catalog_id !== 'string' || typeof row.provider_id !== 'string' || typeof row.folder_name !== 'string' || typeof row.name !== 'string')) {
-      await setSkills($, { busy: null, message: 'Cette version de STH ne fournit pas le catalogue distant en JSON. Mets STH à jour puis réessaie.', isError: true }, epoch)
+      await setSkills($, { busy: null, message: 'This version of STH does not provide the remote catalog as JSON. Update STH, then try again.', isError: true }, epoch)
       return
     }
     const catalog: CatalogSkill[] = rows.map(row => ({
@@ -724,6 +719,7 @@ async function runSkillAction(
   busyText: string,
   args: string[],
   successText: string,
+  expected?: { kind: 'install' | 'remove'; providerId: string; resourceName: string },
 ): Promise<void> {
   const epoch = skillsEpoch
   if (skillsOperationEpoch === epoch) return
@@ -739,26 +735,35 @@ async function runSkillAction(
     if (epoch !== skillsEpoch) return
     const refreshed = await read($, skills)
     if (epoch !== skillsEpoch) return
-    let message = result.isOk ? successText : failureText(result, 'échec')
+    let message = result.isOk ? successText : failureText(result, 'failed')
     let isError = !result.isOk
     if (!verified) {
-      const verificationError = refreshed.message ?? 'statut des skills indisponible'
-      message = result.isOk ? `Commande exécutée ; statut non vérifié : ${verificationError}` : `${message} · Statut non vérifié : ${verificationError}`
+      const verificationError = refreshed.message ?? 'skill status unavailable'
+      message = result.isOk ? `Command completed; status not verified: ${verificationError}` : `${message} · Status not verified: ${verificationError}`
       isError = true
+    } else if (result.isOk && expected) {
+      const installed = refreshed.installed.find(skill => skill.providerId === expected.providerId && skill.resourceName === expected.resourceName)
+      if (expected.kind === 'install' && installed?.status !== 'up-to-date') {
+        message = `Installation not verified: ${skillLabel(expected.resourceName)} ${installed ? `has status ${skillStatus(installed.status)}` : 'is absent from the installed list'}.`
+        isError = true
+      } else if (expected.kind === 'remove' && installed) {
+        message = `Removal not verified: ${skillLabel(expected.resourceName)} is still installed.`
+        isError = true
+      }
     } else if (result.isOk && args[0] === 'update') {
       const outdated = refreshed.installed.filter(skill => skill.status === 'outdated' && !skill.isPinned).length
       const unresolved = refreshed.installed.filter(skill => skill.status !== 'up-to-date' && !skill.isPinned)
       const pinned = refreshed.installed.filter(skill => skill.isPinned).length
       const current = refreshed.installed.filter(skill => skill.status === 'up-to-date').length
       message = outdated > 0
-        ? `Mise à jour exécutée · ${outdated} skill${outdated > 1 ? 's restent' : ' reste'} à mettre à jour.`
+        ? `Update command completed · ${outdated} skill${outdated > 1 ? 's still need' : ' still needs'} an update.`
         : unresolved.length > 0
-        ? `Mise à jour exécutée · ${unresolved.length} skill${unresolved.length > 1 ? 's' : ''} à vérifier (${[...new Set(unresolved.map(skill => skillStatus(skill.status)))].join(', ')}).`
-        : `Mise à jour terminée · ${current} à jour${pinned ? ` · ${pinned} épinglé${pinned > 1 ? 's' : ''}` : ''}.`
+        ? `Update command completed · ${unresolved.length} skill${unresolved.length > 1 ? 's' : ''} to verify (${[...new Set(unresolved.map(skill => skillStatus(skill.status)))].join(', ')}).`
+        : `Update complete · ${current} up to date${pinned ? ` · ${pinned} pinned` : ''}.`
       isError = unresolved.length > 0
     }
     await setSkills($, { message, isError }, epoch)
-    if (epoch === skillsEpoch) $.ui.toast(`STH : ${message}`)
+    if (epoch === skillsEpoch) $.ui.toast(`STH: ${message}`)
   } finally {
     await setSkills($, { busy: null }, epoch)
     if (skillsOperationEpoch === epoch) skillsOperationEpoch = null
@@ -768,23 +773,25 @@ async function runSkillAction(
 async function installSkill($: EngineInterface, skill: CatalogSkill): Promise<void> {
   await runSkillAction(
     $,
-    `Installation de ${skill.folderName}/${skill.name}…`,
+    `Installing ${skill.folderName}/${skill.name}…`,
     ['install', `${skill.folderName}/${skill.name}`, '--provider', skill.providerId, '--json'],
-    `${skill.name} installé`,
+    `${skill.name} installed`,
+    { kind: 'install', providerId: skill.providerId, resourceName: skill.catalogId },
   )
 }
 
 async function removeSkill($: EngineInterface, skill: InstalledSkill): Promise<void> {
   await runSkillAction(
     $,
-    `Retrait de ${skillLabel(skill.resourceName)}…`,
+    `Removing ${skillLabel(skill.resourceName)}…`,
     ['remove', skill.resourceName, '--provider', skill.providerId, '--yes', '--json'],
-    `${skillLabel(skill.resourceName)} retiré`,
+    `${skillLabel(skill.resourceName)} removed`,
+    { kind: 'remove', providerId: skill.providerId, resourceName: skill.resourceName },
   )
 }
 
 async function updateAllSkills($: EngineInterface): Promise<void> {
-  await runSkillAction($, 'Mise à jour des skills…', ['update', '--fail-on-changes', '--json'], 'Mise à jour exécutée')
+  await runSkillAction($, 'Updating skills…', ['update', '--fail-on-changes', '--json'], 'Update command completed')
 }
 
 function readableLines(text: string): string[] {
@@ -838,10 +845,10 @@ async function initProject($: EngineInterface): Promise<void> {
     const draft = await read($, initDraft)
     if (epoch !== skillsEpoch) return
     if (draft.repository.trim() === '' || draft.targets.length === 0) {
-      await setSkills($, { message: 'Renseigne le dépôt et au moins une cible.', isError: true }, epoch)
+      await setSkills($, { message: 'Enter a repository and select at least one assistant.', isError: true }, epoch)
       return
     }
-    await setSkills($, { busy: `sth init : ${draft.provider} ${draft.repository.trim()}…`, message: null, isError: false }, epoch)
+    await setSkills($, { busy: `sth init: ${draft.provider} ${draft.repository.trim()}…`, message: null, isError: false }, epoch)
     if (epoch !== skillsEpoch) return
     const result = await runSth($, ['init', '--no-cloud-prompt'], 180_000, {
       stdin: initScript(draft),
@@ -857,12 +864,12 @@ async function initProject($: EngineInterface): Promise<void> {
     if (epoch !== skillsEpoch) return
     const saved = readableLines(result.stdout).filter(line => line.startsWith('✓'))
     await setSkills($, {
-      message: isLinked && !verified ? `Projet relié ; statut non vérifié : ${refreshed.message ?? 'indisponible'}` : isLinked
-        ? saved.join(' · ') || 'Projet relié à STH.'
-        : readableLines(`${result.stdout}\n${result.stderr}`).slice(-1)[0] ?? 'sth init a échoué',
+      message: isLinked && !verified ? `Project linked; status not verified: ${refreshed.message ?? 'unavailable'}` : isLinked
+        ? saved.join(' · ') || 'Project linked to STH.'
+        : readableLines(`${result.stdout}\n${result.stderr}`).slice(-1)[0] ?? 'sth init failed',
       isError: !isLinked || !verified,
     }, epoch)
-    if (epoch === skillsEpoch) $.ui.toast(isLinked ? 'STH : projet initialisé' : 'STH : échec de sth init')
+    if (epoch === skillsEpoch) $.ui.toast(isLinked ? 'STH: project initialized' : 'STH: sth init failed')
   } finally {
     await setSkills($, { busy: null }, epoch)
     if (skillsOperationEpoch === epoch) skillsOperationEpoch = null
@@ -884,26 +891,51 @@ async function resetSkillsProject($: EngineInterface): Promise<void> {
 
 async function openSkillsPane($: EngineInterface): Promise<boolean> {
   const isLinked = await detectProject($)
-  await $.ui.open({ id: SKILLS_PANE, title: 'Buddy · Skills', rows: 36, columns: 50 })
+  await $.ui.open({ id: SKILLS_PANE, title: 'Buddy · STH', rows: 36, columns: 50, focus: true })
   if (isLinked) await refreshInstalled($)
   return isLinked
+}
+
+async function closeOtherPanes($: EngineInterface, target: string): Promise<void> {
+  for (const pane of await $.ui.panes()) {
+    if (pane.id !== target && /^sth-(usage|skills|activity|context|doctor|resume)$/.test(pane.id)) {
+      await $.ui.close({ id: pane.id })
+    }
+  }
+  await update($, moreMenuOpen, () => false)
 }
 
 export const register: Register = on => {
   registerContext(on)
   registerActivity(on)
   registerProject(on)
+
+  on('ui.open', { id: /^sth-(usage|skills|activity|context|doctor|resume)$/ }, async ($, e, next) => {
+    await closeOtherPanes($, e.id)
+    // Closing the source returns the keyboard before the host considers focus.
+    return next({ ...e, title: e.id === SKILLS_PANE ? 'Buddy · STH' : e.title })
+  })
+  on('ui.press', { plugin: 'sth-usage', element: /^(nav-home|open-skills|open-activity|open-context|open-doctor|open-resume|doctor-configure|sth-check-installation)$/ }, async ($, e, next) => {
+    const targets: Record<string, string> = {
+      'nav-home': PANE, 'open-skills': SKILLS_PANE, 'doctor-configure': SKILLS_PANE,
+      'open-activity': 'sth-activity', 'open-context': 'sth-context',
+      'open-doctor': 'sth-doctor', 'sth-check-installation': 'sth-doctor', 'open-resume': 'sth-resume',
+    }
+    await closeOtherPanes($, targets[e.element]!)
+    return next(e)
+  })
+
   on('session.start', async ($, e, next) => {
     await startFika($)
     await $.command.register({
       name: 'sth-usage',
-      description: 'Ouvre le panneau de suivi de session Buddy / STH',
+      description: 'Open the Buddy / STH session panel',
     })
     await $.command.register({
       name: 'sth-skills',
-      description: 'Pilote les skills STH du projet : installer, retirer, mettre à jour',
+      description: 'Manage STH project skills: install, remove, update',
     })
-    void $.ui.open({ id: PANE, title: 'Buddy · Consommation', rows: 36, columns: 50 })
+    void $.ui.open({ id: PANE, title: 'Buddy · Usage', rows: 36, columns: 50 })
     buddyAnimation?.cancel()
     buddyAnimation = $.clock.every(BUDDY_FRAME_MS, () => animateTerminalBuddies($))
     void refreshSnapshot($)
@@ -920,7 +952,7 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'sth-usage' }, async $ => {
-    await $.ui.open({ id: PANE, title: 'Buddy · Consommation', rows: 36, columns: 50 })
+    await $.ui.open({ id: PANE, title: 'Buddy · Usage', rows: 36, columns: 50, focus: true })
     const current = await refreshSnapshot($)
     const totals = await read($, tokens)
 
@@ -986,8 +1018,8 @@ export const register: Register = on => {
 
     return {
       text: isLinked
-        ? 'Panneau Skills STH ouvert.'
-        : 'Ce projet n’est pas relié à STH (pas de .sth/project.json) : lance `sth init`.',
+        ? 'STH panel opened.'
+        : 'This project is not linked to STH (no .sth/project.json): run `sth init`.',
     }
   })
 
@@ -997,12 +1029,13 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold>Skills Transfer Hub</Text>
-          <Text>Gère les skills de ce projet dans Claude Code sur desktop ou dans le terminal.</Text>
+          <Text>Manage this project’s skills in Claude Code on desktop or in the terminal.</Text>
           {dashboardLink($, e)}
         </Box>
       )
     }
-    const { Box, Text, Button, Input, Select } = $.ui.resolve(e)
+    const { Box, Text, Input, Select } = $.ui.resolve(e)
+    const { Page, Card, Toolbar, Button } = panelChrome($.ui.resolve(e), e)
     const view = await read($, skills)
     const project = await read($, projectView)
     const tab = await read($, skillsTab)
@@ -1014,74 +1047,63 @@ export const register: Register = on => {
       <Box key="skills-header" flexDirection="column" gap={1} alignItems="center">
         {buddy}
         <Box flexDirection="column" alignItems="center">
-          <Text bold>Buddy · Tes skills</Text>
-          <Text dimColor>{isBusy ? 'Buddy travaille…' : view.isLinked ? 'Buddy veille sur tes skills.' : 'Buddy attend ton catalogue.'}</Text>
+          <Text bold>Buddy · STH</Text>
+          <Text dimColor>{isBusy ? 'Buddy is working…' : view.isLinked ? 'Buddy is watching over your skills.' : 'Buddy is waiting for your catalog.'}</Text>
         </Box>
       </Box>
     )
     const feedback = (
       <Box flexDirection="column">
         {view.busy !== null && <Text>{view.busy}</Text>}
-        {view.message !== null && <Text color={view.isError ? 'red' : 'green'}>{view.message}</Text>}
+        {view.message !== null && <Text color={view.isError ? 'red' : undefined}>{view.message}</Text>}
       </Box>
     )
-    const footer = (
-      <Box flexDirection="row" flexWrap="wrap" gap={1}>
-        <Button
-          key="back-usage"
-          label="Consommation"
-          plain
-          dimColor
-          onPress={() => $.ui.open({ id: PANE, title: 'Buddy · Consommation', rows: 36, columns: 50, focus: true })}
-        />
-        <Button key="skills-doctor" label="Diagnostic" plain onPress={() => $.ui.open({ id: 'sth-doctor', title: 'Buddy · Diagnostic', focus: true })} />
-        {dashboardLink($, e)}
-      </Box>
-    )
+    const footer = <Box marginTop={1}>{dashboardLink($, e)}</Box>
 
     if (project.cliStatus === 'missing') {
-      return <Box flexDirection="column" gap={1} paddingX={1}>{header}{sthInstallationGuide($, e)}{footer}</Box>
+      return <Page>{header}{paneNavigation($.ui.resolve(e), e, SKILLS_PANE, pane => $.ui.open(pane))}{sthInstallationGuide($, e)}{footer}</Page>
     }
 
     if (!view.isLinked) {
       const draft = await read($, initDraft)
       const advanced = await read($, initAdvanced)
       return (
-        <Box flexDirection="column" gap={1} paddingX={1}>
+        <Page>
           {header}
+          {paneNavigation($.ui.resolve(e), e, SKILLS_PANE, pane => $.ui.open(pane))}
           {feedback}
-          <Box flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
-            <Text bold>1. Choisir un catalogue</Text>
+          <Card>
+            <Text bold>1. Choose a catalog</Text>
             <Select
               key="init-provider"
-              label="Hébergeur : "
+              label="Provider"
               options={INIT_PROVIDERS.map(provider => ({ value: provider.id, label: provider.label }))}
               value={draft.provider}
               onSelect={value => (isBusy ? undefined : setInitDraft($, { provider: value }))}
             />
             <Input
               key="init-repository"
-              label="Dépôt : "
-              placeholder="organisation/catalogue ou URL"
+              label="Repository: "
+              placeholder="organization/catalog or URL"
               value={draft.repository}
               autoFocus
-              submitLabel="valider"
+              submitLabel="confirm"
               onInput={value => (isBusy ? undefined : setInitDraft($, { repository: value }))}
               onSubmit={value => (isBusy ? undefined : setInitDraft($, { repository: value }))}
             />
             <Select
               key="init-access"
-              label="Accès : "
-              options={[{ value: 'public', label: 'Public' }, { value: 'private', label: 'Privé' }]}
+              label="Access"
+              options={[{ value: 'public', label: 'Public' }, { value: 'private', label: 'Private' }]}
               value={draft.isPrivate ? 'private' : 'public'}
               onSelect={value => (isBusy ? undefined : setInitDraft($, { isPrivate: value === 'private' }))}
             />
             {draft.isPrivate && (
-              <Text dimColor>Utilise les identifiants Git ou le token de ton hébergeur configuré dans ton environnement.</Text>
+              <Text dimColor>Use the Git credentials or provider token configured in your environment.</Text>
             )}
             <Button
               key="init-advanced"
-              label={advanced ? 'Masquer les options avancées' : 'Options avancées'}
+              label={advanced ? 'Hide advanced options' : 'Advanced options'}
               plain
               dimColor
               onPress={() => toggleInitAdvanced($)}
@@ -1090,25 +1112,25 @@ export const register: Register = on => {
               <Box flexDirection="column" gap={1}>
                 <Input
                   key="init-ref"
-                  label="Branche : "
+                  label="Branch: "
                   value={draft.ref}
                   onInput={value => (isBusy ? undefined : setInitDraft($, { ref: value }))}
                   onSubmit={value => (isBusy ? undefined : setInitDraft($, { ref: value }))}
                 />
                 <Input
                   key="init-catalog"
-                  label="Fichier catalogue : "
+                  label="Catalog file: "
                   value={draft.catalogPath}
                   onInput={value => (isBusy ? undefined : setInitDraft($, { catalogPath: value }))}
                   onSubmit={value => (isBusy ? undefined : setInitDraft($, { catalogPath: value }))}
                 />
               </Box>
             )}
-          </Box>
-          <Box flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
-            <Text bold>2. Choisir les assistants</Text>
-            <Text dimColor>Les skills seront disponibles pour :</Text>
-            <Box flexDirection="row" flexWrap="wrap" gap={1}>
+          </Card>
+          <Card>
+            <Text bold>2. Choose assistants</Text>
+            <Text dimColor>Skills will be available to:</Text>
+            <Toolbar>
               {INIT_TARGETS.map(target => (
                 <Button
                   key={`target-${target.id}`}
@@ -1117,16 +1139,16 @@ export const register: Register = on => {
                   onPress={() => (isBusy ? undefined : toggleInitTarget($, target.id))}
                 />
               ))}
-            </Box>
-          </Box>
+            </Toolbar>
+          </Card>
           {!isBusy && (
-            <Box flexDirection="row" flexWrap="wrap" gap={1}>
-              <Button key="init-run" label="Relier ce projet" variant="primary" onPress={() => initProject($)} />
-              <Button key="recheck" label="Déjà configuré ?" dimColor onPress={() => openSkillsPane($)} />
-            </Box>
+            <Toolbar>
+              <Button key="init-run" label="Link this project" variant="primary" onPress={() => initProject($)} />
+              <Button key="recheck" label="Already configured?" dimColor onPress={() => openSkillsPane($)} />
+            </Toolbar>
           )}
           {footer}
-        </Box>
+        </Page>
       )
     }
 
@@ -1139,75 +1161,76 @@ export const register: Register = on => {
     const outdatedCount = view.installed.filter(skill => skill.status === 'outdated' && !skill.isPinned).length
 
     return (
-      <Box flexDirection="column" gap={1} paddingX={1}>
+      <Page>
         {header}
-        <Text dimColor>Sources · {view.providers.join(', ') || 'Aucune source'}</Text>
-        <Text dimColor>Stack · {project.stack.join(', ') || 'Non détectée'}</Text>
-        <Box flexDirection="row" flexWrap="wrap" gap={1}>
+        {paneNavigation($.ui.resolve(e), e, SKILLS_PANE, pane => $.ui.open(pane))}
+        <Text dimColor>Sources · {view.providers.join(', ') || 'No sources'}</Text>
+        <Text dimColor>Stack · {project.stack.join(', ') || 'Not detected'}</Text>
+        <Toolbar>
           <Button
             key="tab-installed"
-            label={`Installés (${view.installed.length})`}
+            label={`${tab === 'installed' ? '✓ ' : ''}Installed (${view.installed.length})`}
             variant={tab === 'installed' ? 'primary' : 'secondary'}
             hotkey="1"
             onPress={() => showSkillsTab($, 'installed')}
           />
           <Button
             key="tab-catalog"
-            label="Catalogue"
+            label={tab === 'catalog' ? '✓ Catalog' : 'Catalog'}
             variant={tab === 'catalog' ? 'primary' : 'secondary'}
             hotkey="2"
             onPress={() => showSkillsTab($, 'catalog')}
           />
-        </Box>
+        </Toolbar>
         {feedback}
         {tab === 'installed' ? (
           <Box flexDirection="column" gap={1}>
             {view.installed.length === 0 ? (
-              <Box flexDirection="column" gap={1} borderStyle="round" borderDimColor padding={1}>
-                <Text bold>Ton premier skill t’attend.</Text>
-                <Text dimColor>Parcours le catalogue pour l’ajouter à ce projet.</Text>
-                {!isBusy && <Button key="browse-empty" label="Parcourir le catalogue" variant="primary" onPress={() => showSkillsTab($, 'catalog')} />}
-              </Box>
+              <Card>
+                <Text bold>Your first skill is waiting.</Text>
+                <Text dimColor>Browse the catalog to add it to this project.</Text>
+                {!isBusy && <Button key="browse-empty" label="Browse catalog" variant="primary" onPress={() => showSkillsTab($, 'catalog')} />}
+              </Card>
             ) : (
               <Box flexDirection="column" gap={1}>
                 {!isBusy && (
-                  <Box flexDirection="row" flexWrap="wrap" gap={1}>
+                  <Toolbar>
                     <Button
                       key="update-all"
-                      label={outdatedCount > 0 ? `Mettre à jour (${outdatedCount})` : 'Vérifier les mises à jour'}
+                      label={outdatedCount > 0 ? `Update (${outdatedCount})` : 'Check for updates'}
                       variant={outdatedCount > 0 ? 'primary' : 'secondary'}
                       onPress={() => outdatedCount > 0 ? updateAllSkills($) : refreshInstalled($)}
                     />
-                    <Button key="refresh" label="Actualiser" dimColor onPress={() => refreshInstalled($)} />
-                  </Box>
+                    <Button key="refresh" label="Refresh" dimColor onPress={() => refreshInstalled($)} />
+                  </Toolbar>
                 )}
                 {view.installed.map(skill => (
-                  <Box key={`installed-${skill.providerId}-${skill.resourceName}`} flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
-                    <Box flexDirection={narrow ? 'column' : 'row'} justifyContent="space-between" gap={narrow ? 0 : 1}>
+                  <Box key={`installed-${skill.providerId}-${skill.resourceName}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
+                    <Box flexDirection={narrow ? 'column' : 'row'} justifyContent="space-between" gap={1}>
                       <Box flexDirection="column" flexGrow={1} minWidth={0}>
                         <Text bold>{skillLabel(skill.resourceName)}</Text>
-                        <Text dimColor>{skill.providerId}{skill.isPinned ? ' · Épinglé' : ''}</Text>
-                        <Text color={statusColor(skill.status)}>{skillStatus(skill.status)}</Text>
-                        <Text dimColor>Version · {skill.installedVersion || 'Non communiquée'}{skill.latestVersion && skill.latestVersion !== skill.installedVersion ? ` → ${skill.latestVersion}` : ''}</Text>
+                        <Text dimColor>{skill.providerId}{skill.isPinned ? ' · Pinned' : ''}</Text>
+                        <Text >{skillStatus(skill.status)}</Text>
+                        <Text dimColor>Version · {skill.installedVersion || 'Not provided'}{skill.latestVersion && skill.latestVersion !== skill.installedVersion ? ` → ${skill.latestVersion}` : ''}</Text>
                       </Box>
-                      {!isBusy && view.pendingRemoval !== skill.resourceName && (
+                      {!isBusy && view.pendingRemoval !== `${skill.providerId}:${skill.resourceName}` && (
                         <Button
-                          key={`remove-${skill.resourceName}`}
-                          label="Retirer"
+                          key={`remove-${skill.providerId}-${skill.resourceName}`}
+                          label="Remove"
                           plain
                           dimColor
-                          onPress={() => setSkills($, { pendingRemoval: skill.resourceName })}
+                          onPress={() => setSkills($, { pendingRemoval: `${skill.providerId}:${skill.resourceName}` })}
                         />
                       )}
                     </Box>
-                    {!isBusy && view.pendingRemoval === skill.resourceName && (
+                    {!isBusy && view.pendingRemoval === `${skill.providerId}:${skill.resourceName}` && (
                       <Box flexDirection="column" gap={1} marginTop={1}>
-                        <Text>Retirer {skillLabel(skill.resourceName)} de ce projet ?</Text>
-                        {skill.status.includes('modified') && <Text color="yellow">Les modifications locales seront retirées avec ce skill.</Text>}
-                        <Box flexDirection="row" flexWrap="wrap" gap={1}>
-                          <Button key={`cancel-${skill.resourceName}`} label="Garder" onPress={() => setSkills($, { pendingRemoval: null })} />
-                          <Button key={`confirm-${skill.resourceName}`} label="Confirmer le retrait" onPress={() => removeSkill($, skill)} />
-                        </Box>
+                        <Text>Remove {skillLabel(skill.resourceName)} from this project?</Text>
+                        {skill.status.includes('modified') && <Text color="red">STH protects local changes. Back them up and restore the original file before removing this skill.</Text>}
+                        <Toolbar>
+                          <Button key={`cancel-${skill.providerId}-${skill.resourceName}`} label="Keep" variant="primary" onPress={() => setSkills($, { pendingRemoval: null })} />
+                          <Button key={`confirm-${skill.providerId}-${skill.resourceName}`} label="Confirm removal" onPress={() => removeSkill($, skill)} />
+                        </Toolbar>
                       </Box>
                     )}
                   </Box>
@@ -1219,69 +1242,72 @@ export const register: Register = on => {
           <Box flexDirection="column" gap={1}>
             {needle === '' && recommendations.length > 0 && (
               <Box key="recommendations" flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
-                <Text bold>Adaptés à ce projet</Text>
+                <Text bold>Recommended for this project</Text>
                 {recommendations.map(({ skill, reason }) => (
                   <Box key={`recommend-${skill.providerId}-${skill.catalogId}`} flexDirection="column">
                     <Text bold>{skill.name}</Text>
                     <Text dimColor>{reason}</Text>
                     {skill.description !== '' && <Text>{skill.description}</Text>}
-                    <Text dimColor>Version · {skill.version || 'Non communiquée par le catalogue'}</Text>
-                    {!isBusy && <Button key={`recommend-install-${skill.providerId}-${skill.catalogId}`} label="Installer" onPress={() => installSkill($, skill)} />}
+                    <Text dimColor>Version · {skill.version || 'Not provided by the catalog'}</Text>
+                    {!isBusy && <Button key={`recommend-install-${skill.providerId}-${skill.catalogId}`} label="Install" variant="primary" onPress={() => installSkill($, skill)} />}
                   </Box>
                 ))}
               </Box>
             )}
             <Input
               key="filter"
-              label="Rechercher : "
-              placeholder="nom ou description"
+              label="Search: "
+              placeholder="name or description"
               value={view.filter}
               autoFocus
-              submitLabel="rechercher"
+              submitLabel="search"
               onInput={value => setSkills($, { filter: value })}
               onSubmit={value => setSkills($, { filter: value })}
             />
             {view.catalog === null ? (
-              !isBusy && <Button key="load-catalog" label="Charger le catalogue" onPress={() => loadCatalog($)} />
+              !isBusy && <Button key="load-catalog" label="Load catalog" variant="primary" onPress={() => loadCatalog($)} />
             ) : (
               <Box flexDirection="column" gap={1}>
-                <Text dimColor>{matches.length} skill{matches.length > 1 ? 's' : ''} disponible{matches.length > 1 ? 's' : ''}</Text>
+                <Text dimColor>{matches.length} skill{matches.length !== 1 ? 's' : ''} available</Text>
                 {matches.length === 0 && (
-                  <Text dimColor>{needle ? 'Aucun résultat. Essaie un autre terme.' : view.catalog.length === 0 ? 'Ce catalogue ne contient aucun skill.' : 'Tous les skills du catalogue sont installés.'}</Text>
+                  <Text dimColor>{needle ? 'No results. Try another search term.' : view.catalog.length === 0 ? 'This catalog has no skills.' : 'All catalog skills are installed.'}</Text>
                 )}
                 {matches.slice(0, CATALOG_ROWS).map(skill => (
-                  <Box key={`catalog-${skill.providerId}-${skill.catalogId}`} flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
-                    <Box flexDirection={narrow ? 'column' : 'row'} justifyContent="space-between" gap={narrow ? 0 : 1}>
+                  <Box key={`catalog-${skill.providerId}-${skill.catalogId}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
+                    <Box flexDirection={narrow ? 'column' : 'row'} justifyContent="space-between" gap={1}>
                       <Box flexDirection="column" flexGrow={1} minWidth={0}>
                         <Text bold>{skill.name}</Text>
                         <Text dimColor>{skill.folderName} · {skill.kind} · {skill.providerId}</Text>
                       </Box>
                       {!isBusy && (
-                        <Button key={`install-${skill.providerId}-${skill.catalogId}`} label="Installer" onPress={() => installSkill($, skill)} />
+                        <Button key={`install-${skill.providerId}-${skill.catalogId}`} label="Install" variant="primary" onPress={() => installSkill($, skill)} />
                       )}
                     </Box>
                     {skill.description !== '' && <Text dimColor>{skill.description}</Text>}
-                    <Text dimColor>Version · {skill.version || 'Non communiquée par le catalogue'}</Text>
+                    <Text dimColor>Version · {skill.version || 'Not provided by the catalog'}</Text>
                   </Box>
                 ))}
-                {matches.length > CATALOG_ROWS && <Text dimColor>{CATALOG_ROWS} résultats affichés. Affine ta recherche pour voir les autres.</Text>}
+                {matches.length > CATALOG_ROWS && <Text dimColor>{CATALOG_ROWS} results shown. Refine your search to see more.</Text>}
               </Box>
             )}
           </Box>
         )}
         {footer}
-      </Box>
+      </Page>
     )
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const elements = $.ui.resolve(e)
+    const { Box, Text } = elements
+    const { Page, Card, Button } = panelChrome($.ui.resolve(e), e)
+    const moreOpen = await read($, moreMenuOpen)
     const current = await read($, snapshot)
     const skillsView = await read($, skills)
     const totals = await read($, tokens)
     const turnCount = await read($, turns)
     const activity = await read($, activityView)
-    const project = await read($, projectView)
+    const context = await read($, contextView)
     const working = (await read($, isWorking)) || skillsView.busy !== null
     const fika = await read($, fikaEligibility)
     const showFika = fika.ready && !fika.hasPrompt && !working &&
@@ -1289,14 +1315,13 @@ export const register: Register = on => {
     const state = activityBuddyState(activity) ?? buddyState(working, current, turnCount)
     const nowMs = await $.clock.now()
     const playingFika = showFika && fika.playingUntil != null && fika.playingUntil > nowMs
-    const caption = playingFika ? 'Buddy fait une fika à Stockholm' : activityCaption(activity) ?? BUDDY_CAPTIONS[state]
-    const barWidth = Math.max(4, Math.min(32, e.props.bodyColumns - 6))
+    const caption = playingFika ? 'Buddy is taking a fika break in Stockholm' : activityCaption(activity) ?? BUDDY_CAPTIONS[state]
     const buddy = await buddyElement($, e, PANE, state, caption,
       playingFika ? fika.playingUntil! - FIKA_DURATION_MS : null, showFika)
-    const outdated = skillsView.installed.filter(skill => skill.status === 'outdated').length
+    const pills = statusPills({ ...context, limits: current.limits }, totals, current.costUsd, nowMs)
 
     return (
-      <Box flexDirection="column" gap={1} paddingX={1}>
+      <Page>
         <Box key="usage-header" flexDirection="column" gap={1} alignItems="center">
           {fikaThought($, e, showFika, playingFika)}
           {buddy}
@@ -1305,63 +1330,35 @@ export const register: Register = on => {
             <Text key="buddy-caption" dimColor wrap="truncate-end">{caption}</Text>
           </Box>
         </Box>
-        <Box key="workflow-actions" flexDirection="row" flexWrap="wrap" gap={1}>
-          <Button key="open-activity" label="Bilan du tour" onPress={() => $.ui.open({ id: 'sth-activity', title: 'Buddy · Bilan', focus: true })} />
-          <Button key="open-doctor" label="Diagnostic" onPress={() => $.ui.open({ id: 'sth-doctor', title: 'Buddy · Diagnostic', focus: true })} />
-          <Button key="open-resume" label="Reprendre" onPress={() => $.ui.open({ id: 'sth-resume', title: 'Buddy · Reprise', focus: true })} />
+        <Box key="workflow-actions" flexDirection="row" flexWrap="wrap" alignItems="center" gap={1}>
+          <Button key="open-skills" label="STH" variant="primary" onPress={() => openSkillsPane($)} />
+          <Button key="open-activity" label="Summary" onPress={() => $.ui.open({ id: 'sth-activity', title: 'Buddy · Summary', focus: true })} />
+          <Button key="nav-more" label={moreOpen ? 'Less ↑' : 'More ↓'} hotkey="m" onPress={async () => {
+            await update($, moreMenuOpen, current => !current)
+            $.ui.invalidate('ui.render')
+          }} />
         </Box>
-        {project.cliStatus === 'missing' && sthInstallationGuide($, e)}
-        <Box flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
-          <Text bold>Abonnement Claude</Text>
-          {current.limits.length === 0 && <Text dimColor>Aucune limite communiquée pour cette session.</Text>}
-          {current.limits.map(limit => (
-            <Box key={`limit-${limit.kind}`} flexDirection="column">
-              <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" gap={1}>
-                <Text>{windowLabel(limit.kind)}</Text>
-                <Text bold color={limitColor(limit.percentUsed)}>{Math.round(limit.percentUsed)} %</Text>
-              </Box>
-              <Text key={`bar-${limit.kind}`} color={limitColor(limit.percentUsed)}>{progressBar(limit.percentUsed, barWidth)}</Text>
-              <Text dimColor>{resetIn(limit.resetsAt, nowMs).replace('reset dans', 'Réinitialisation dans')}</Text>
-            </Box>
-          ))}
-        </Box>
-        <Box flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
+        {moreOpen && <Box key="more-menu" flexDirection="row" flexWrap="wrap" gap={1}>
+          <Button key="open-context" label="Context" onPress={() => $.ui.open({ id: 'sth-context', title: 'Buddy · Context', rows: 36, columns: 50, focus: true })} />
+          <Button key="open-doctor" label="Diagnostics" onPress={() => $.ui.open({ id: 'sth-doctor', title: 'Buddy · Diagnostics', rows: 36, columns: 50, focus: true })} />
+          <Button key="open-resume" label="Resume" onPress={() => $.ui.open({ id: 'sth-resume', title: 'Buddy · Resume', rows: 36, columns: 50, focus: true })} />
+        </Box>}
+
+        <Card key="session-consumption">
           <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" gap={1}>
-            <Text bold>Cette session</Text>
-            <Text dimColor>{turnCount} tour{turnCount > 1 ? 's' : ''}</Text>
+            <Text bold>Usage</Text>
+            <Text dimColor>{turnCount} turn{turnCount !== 1 ? 's' : ''}</Text>
           </Box>
-          {current.costUsd !== null && (
-            <Box flexDirection="row" justifyContent="space-between" gap={1}>
-              <Text dimColor>Coût estimé</Text>
-              <Text bold>{usd(current.costUsd)}</Text>
-            </Box>
-          )}
-          <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" gap={1}>
-            <Text dimColor>Tokens reçus</Text>
-            <Text>{compactNumber(totals.input)}</Text>
+          <Box flexDirection="row" flexWrap="wrap" gap={1}>
+            {pills.map(pill => usagePillElement(elements, e, pill))}
           </Box>
-          <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" gap={1}>
-            <Text dimColor>Tokens générés</Text>
-            <Text>{compactNumber(totals.output)}</Text>
-          </Box>
-          <Text dimColor>Cache · {compactNumber(totals.cacheRead)} lu / {compactNumber(totals.cacheWrite)} écrit</Text>
-        </Box>
-        <Box flexDirection="column" gap={1} borderStyle="round" borderDimColor paddingX={1}>
-          <Text bold>Skills du projet</Text>
-          <Text dimColor>
-            {skillsView.isLinked
-              ? `${skillsView.installed.length} installé${skillsView.installed.length > 1 ? 's' : ''}${outdated > 0 ? ` · ${outdated} à mettre à jour` : ''}`
-              : 'Relie un catalogue pour retrouver tes skills ici.'}
-          </Text>
-          <Button
-            key={skillsView.isLinked ? 'open-skills' : 'open-init'}
-            label={skillsView.isLinked ? 'Gérer les skills' : 'Configurer STH'}
-            variant="primary"
-            onPress={() => openSkillsPane($)}
-          />
-        </Box>
-        {dashboardLink($, e, 'Ouvrir le dashboard STH')}
-      </Box>
+          {current.limits.length === 0 && <Text dimColor>Quotas are unavailable for this session.</Text>}
+          {context.context?.tokens == null && <Text dimColor>Context is available after the first response.</Text>}
+          {pills.some(pill => pill.key.startsWith('tokens-')) && <Text dimColor>~ Tokens observed since the mod loaded.</Text>}
+        </Card>
+        {dashboardLink($, e, 'Open the STH dashboard')}
+        <Text key="plugin-version" dimColor>STH v{PLUGIN_VERSION}</Text>
+      </Page>
     )
   })
 }

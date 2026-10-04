@@ -1,52 +1,82 @@
 # Buddy · Claude Code
 
-Buddy suit le contexte et les quotas Claude, les fichiers modifiés et les vérifications, puis aide à retrouver les skills STH adaptés au projet.
+Version **0.3.0**. The version is also visible at the bottom of the Home panel.
 
-## Charger le mod
+Buddy tracks Claude context and quotas, changed files and checks, then helps you find STH skills that fit your project.
 
-Claude Code 2.1.287 ou supérieur est requis. Depuis ce dossier :
+## Install from GitHub
+
+Requires Claude Code **2.1.287 or later** and Git. Run in your terminal:
+
+```sh
+claude plugin marketplace add https://github.com/Skills-transfer-hub/sth-claude.git
+claude plugin install sth-usage@sth --scope user
+```
+
+Start Claude Code in your project, then run `/sth-usage`. In an already open session, run `/reload-plugins` first. The user scope enables Buddy across your projects. The STH CLI is only needed for catalog, installation and update actions; usage tracking works without it.
+
+To update:
+
+```sh
+claude plugin marketplace update sth
+claude plugin update sth-usage@sth
+```
+
+Run `/reload-plugins` or restart Claude Code after updating. To uninstall, run `claude plugin uninstall sth-usage@sth`.
+
+See the official [mod installation guide](https://code.claude.com/docs/en/plugins/mods/overview) and [marketplace guide](https://code.claude.com/docs/en/plugin-marketplaces).
+
+## Load the mod
+
+Claude Code 2.1.287 or later is required. From this directory:
 
 ```sh
 claude --plugin-dir .
 ```
 
-Le module est rechargé à chaque sauvegarde dans une session qui l'a chargé. Une session Desktop sans le plugin ne reçoit pas ces fonctions automatiquement.
+The module reloads on every save in a session that has loaded it. Desktop sessions without the plugin do not receive these features automatically.
 
-## Utilisation
+## Usage
 
-| Accès | Fonction |
+The interface lives in the right panel. The home screen keeps Buddy, followed by a single navigation row: STH, Summary and More (Context, Diagnostics and Resume). The STH page manages installed skills and the catalog. More expands three navigation buttons. Other screens provide a single Home button. Navigation replaces the current panel instead of stacking another panel on top. The mod does not add a strip above the message field.
+
+The Usage card shows each metric once: quotas and reset times, context, observed tokens, cost and agents. Pills follow the STH design system's neutral tokens: thin outlines, Inter labels and JetBrains Mono SVG values. Native controls keep the fonts and dimensions imposed by Claude; terminal buttons have neutral outlines. Red is reserved for errors.
+
+Desktop pill details appear on hover. The countdown redraws every 30 seconds without requesting new usage data. “~” marks tokens accumulated since the mod loaded; earlier history may be missing. A [panel preview](previews/usage-band/index.html) shows light, dark and narrow layouts with sample data; it is not a Claude session.
+
+| Access | Function |
 | --- | --- |
-| Barre au-dessus du prompt ou `/sth-context` | Contexte utilisé, quotas restants, agents actifs ; détail système, tools, MCP, mémoire et messages. |
-| `/sth-usage` | Buddy, consommation et boutons pour ouvrir les autres panneaux. |
-| Bilan au-dessus du prompt ou `/sth-activity` | Fichiers effectivement écrits, erreurs outils et tests observés. Boutons pour le diff, le brouillon de vérification et le bilan détaillé. Exécution explicite des tests reconnus dans le panneau. |
-| `/sth-skills` | Skills installés, versions et mises à jour ; recommandations issues du catalogue selon les manifestes du projet. |
-| `/sth-doctor` | Stack, binaires disponibles, commandes de test, configuration STH et état des outils MCP observés. Le diagnostic n'exécute pas les tests. |
-| Proposition au retour dans le projet ou `/sth-resume` | Objectif, fichiers, vérifications et prochaine étape de la session précédente. Consultation avant ajout explicite au brouillon ; le résumé n'est pas envoyé automatiquement. |
+| More → Context or `/sth-context` | Context breakdown: system, tools, MCP, memory, messages and active agents. |
+| `/sth-usage` | Buddy, combined usage metrics and navigation to the other panels. |
+| Summary or `/sth-activity` | Files actually written, tool errors and observed tests. Buttons open the diff, prepare a verification draft and show the detailed summary. Recognized tests run only when explicitly requested in the panel. |
+| STH or `/sth-skills` | Installed skills, versions and updates; catalog recommendations based on project manifests. |
+| `/sth-doctor` | Stack, available binaries, test commands, STH configuration and observed MCP tool status. Diagnostics do not run tests. |
+| More → Resume or `/sth-resume` | Goal, files, checks and next step from the previous session. Inspect the summary before explicitly adding it to the draft; it is not sent automatically. |
 
-Buddy distingue le travail en cours, l'attente d'une autorisation, les erreurs, la fin du tour et les interruptions. Un tour principal d'au moins 60 secondes déclenche une notification discrète dans Claude.
+Buddy distinguishes work in progress, pending permission, errors, completed turns and interruptions. A main turn lasting at least 60 seconds triggers a discreet notification in Claude.
 
-Buddy tente d'afficher les PNG d'origine lorsque le terminal accepte les images : 384 × 384 pour les états habituels, 720 × 720 pour Fika. Le refus réel du terminal active un rendu par quadrants colorés, calculé depuis des poses de 96 × 96 pixels. Ce rendu reste un dessin par caractères : son détail dépend de la taille du panneau et de la police du terminal. Sous tmux, il est utilisé directement. Le panneau adapte l'animation à sa taille et propose de l'agrandir lorsqu'il manque de place. Le rendu Desktop garde les images HD existantes.
+Buddy tries to display the original PNGs when the terminal supports images: 384 × 384 for regular states and 720 × 720 for Fika. An actual image rejection from the terminal enables a colored quadrant fallback generated from 96 × 96 poses. This remains a character-based drawing: its detail depends on the panel size and terminal font. Under tmux, the fallback is used directly. The panel adapts the animation to its size and suggests enlarging it when space is limited. Desktop keeps the existing HD images.
 
-Le contexte est estimé localement avec le mode `summary` de Claude. Le mod n'appelle pas de modèle supplémentaire pour son suivi. Une mesure inconnue reste indisponible ; les tokens facturés cumulés ne représentent pas le remplissage du contexte.
+Context is estimated locally using Claude's `summary` mode. The mod does not call an additional model for tracking. Unknown metrics remain unavailable; cumulative billed tokens do not indicate how full the context window is.
 
-Les tests sont marqués réussis ou échoués seulement avec un code de sortie observé. Dans les versions où l'outil Bash ne fournit pas ce code, le résultat reste non vérifié. Le bouton d'exécution utilise une commande reconnue du projet et affiche son résultat réel. Le diff natif peut inclure des changements antérieurs au tour.
+Tests are marked as passed or failed only when an exit code has been observed. In versions where the Bash tool does not provide that code, the result remains unverified. The run button uses a recognized project command and displays its actual result. The native diff may include changes made before the current turn.
 
-Les états MCP reflètent les outils exposés et les appels observés. Ils ne prouvent pas qu'un serveur sans outils est connecté. Les versions des skills sont affichées lorsqu'elles sont communiquées par STH. La mise à jour ignore les versions épinglées et protège les modifications locales. Son bilan repose sur une nouvelle lecture de l'état STH ; une vérification échouée reste affichée comme telle.
+MCP status reflects exposed tools and observed calls. It does not prove that a server with no tools is connected. Skill versions are displayed when STH provides them. Updates skip pinned versions and protect local changes. The update report comes from a fresh STH status check; a failed verification remains visible as such.
 
-Le résumé local se trouve dans `.sth/buddy-session.json` dans le dossier de la session. Il contient un objectif abrégé, jusqu'à 40 chemins et 12 résultats de vérification, sans transcript ni sorties de commandes. Les secrets courants sont masqués et les chemins sensibles exclus. Une erreur d'écriture apparaît dans le panneau.
+The local summary is stored in `.sth/buddy-session.json` in the session directory. It contains an abbreviated goal, up to 40 paths and 12 check results, without a transcript or command output. Common secrets are masked and sensitive paths are excluded. Write errors appear in the panel.
 
-## Installer STH
+## Install STH
 
-Si le binaire STH manque, Buddy affiche le guide avant la configuration du projet.
+If the STH binary is missing, Buddy shows the installation guide before project setup.
 
-macOS ou Linux avec Homebrew :
+macOS or Linux with Homebrew:
 
 ```sh
 brew install skills-transfer-hub/sth/sth
 sth version
 ```
 
-Windows avec Scoop :
+Windows with Scoop:
 
 ```powershell
 scoop bucket add sth https://github.com/Skills-transfer-hub/scoop-sth
@@ -54,17 +84,30 @@ scoop install sth
 sth version
 ```
 
-Alternatives Windows : `winget install STH.STH` ou `choco install sth`.
+Windows alternatives: `winget install STH.STH` or `choco install sth`.
 
-Sans gestionnaire de paquets, utiliser les [releases officielles](https://github.com/Skills-transfer-hub/sth-releases/releases), vérifier `SHA256SUMS` et ajouter le binaire au PATH. Voir la [documentation d'installation STH](https://github.com/Skills-transfer-hub/sth-releases/blob/main/README.md).
+Without a package manager, use the [official releases](https://github.com/Skills-transfer-hub/sth-releases/releases), verify `SHA256SUMS` and add the binary to PATH. See the [STH installation documentation](https://github.com/Skills-transfer-hub/sth-releases/blob/main/README.md).
 
-Relancer le terminal si nécessaire, puis utiliser « Vérifier l'installation » ou `/sth-doctor`. Une fois STH disponible, `/sth-skills` permet de relier un catalogue au projet.
+Restart the terminal if needed, then use Check installation or `/sth-doctor`. Once STH is available, `/sth-skills` lets you connect a catalog to the project.
 
-## Vérifier le mod
+## Validate the mod
 
 ```sh
 claude plugin validate .
 claude plugin test .
 ```
 
-Les tests couvrent le terminal et le desktop, les boutons et brouillons, les données absentes, les permissions, les bilans et la reprise, ainsi que les animations Buddy/Fika existantes.
+Tests cover terminal and desktop rendering, buttons and drafts, missing data, permissions, summaries and resume, plus the existing Buddy and Fika animations.
+
+## Rebuild the preview
+
+With Node 22 or later and the STH design system available locally:
+
+```sh
+node tools/preview_usage_pills.mjs /path/to/design-system
+python3 -m http.server 8768 --bind 127.0.0.1 --directory previews/usage-band
+```
+
+Open [the local preview](http://127.0.0.1:8768/). STH, Summary and More open sample views in the same panel; Home returns to the usage overview and closes the previous view. The STH view has working Installed and Catalog tabs. Installation, removal, session actions and dashboard navigation are disabled in the preview.
+
+The generator uses the mod's SVG renderer and copies the original Buddy image and design system styles without modifying their sources. The preview uses the design system's Google Fonts import, with its declared local fallbacks. The mod does not fetch these fonts at runtime.

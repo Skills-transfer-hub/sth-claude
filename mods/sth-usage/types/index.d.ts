@@ -131,6 +131,7 @@ declare module 'claude-code' {
       initDraft: InitDraft
       initAdvanced: boolean
       skillsTab: 'installed' | 'catalog'
+      moreMenuOpen: boolean
       fika: FikaEligibility
       contextView: {
         context: SessionContextUsage | null

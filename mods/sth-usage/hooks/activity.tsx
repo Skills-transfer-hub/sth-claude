@@ -1,6 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, Register } from 'claude-code'
 import { isPromptText } from './fika'
+import { panelChrome, paneNavigation } from './presentation'
 
 export type TestEvidence = {
   label: string
@@ -64,9 +65,9 @@ function record(value: unknown): RecordValue | undefined {
 // Save a short objective, never command output, tool arguments or the transcript.
 export function safeObjective(text: string): string {
   return text
-    .replace(/\b(?:sk-[\w-]{8,}|gh[pousr]_[\w]{8,}|github_pat_[\w]{8,}|xox[baprs]-[\w-]{8,})\b/g, '[secret masqué]')
-    .replace(/\b(?:Bearer\s+|(?:api[_-]?key|token|password|secret|mot de passe)\s*[:=]\s*)[^\s,;]+/gi, '[secret masqué]')
-    .replace(/https?:\/\/[^\s]+/gi, '[lien]')
+    .replace(/\b(?:sk-[\w-]{8,}|gh[pousr]_[\w]{8,}|github_pat_[\w]{8,}|xox[baprs]-[\w-]{8,})\b/g, '[redacted]')
+    .replace(/\b(?:Bearer\s+|(?:api[_-]?key|token|password|secret|mot de passe)\s*[:=]\s*)[^\s,;]+/gi, '[redacted]')
+    .replace(/https?:\/\/[^\s]+/gi, '[link]')
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
     .replace(/\s+/g, ' ').trim().slice(0, 180)
 }
@@ -104,20 +105,20 @@ export function testEvidence(label: string, value: unknown, command?: string): T
 }
 
 export function testsCaption(tests: readonly TestEvidence[]): string {
-  if (tests.length === 0) return 'Tests non exécutés'
+  if (tests.length === 0) return 'Tests not run'
   const passed = tests.filter(test => test.status === 'passed').length
   const failed = tests.filter(test => test.status === 'failed').length
   const unknown = tests.filter(test => test.status === 'unknown').length
-  return [passed && `${passed} réussi${passed > 1 ? 's' : ''}`, failed && `${failed} échoué${failed > 1 ? 's' : ''}`,
-    unknown && `${unknown} résultat${unknown > 1 ? 's' : ''} non vérifié${unknown > 1 ? 's' : ''}`].filter(Boolean).join(' · ')
+  return [passed && `${passed} passed`, failed && `${failed} failed`,
+    unknown && `${unknown} unverified result${unknown > 1 ? 's' : ''}`].filter(Boolean).join(' · ')
 }
 
 export function activityCaption(view: ActivityView): string | null {
-  if (view.phase === 'working') return 'Buddy travaille…'
-  if (view.phase === 'complete') return 'Buddy a terminé'
-  if (view.phase === 'permission') return `Buddy attend votre autorisation${view.waitingTool ? ` (${view.waitingTool})` : ''}`
-  if (view.phase === 'error') return 'Buddy attend une action après une erreur'
-  if (view.phase === 'interrupted') return 'Buddy attend la suite après une interruption'
+  if (view.phase === 'working') return 'Buddy is working…'
+  if (view.phase === 'complete') return 'Buddy is done'
+  if (view.phase === 'permission') return `Buddy is waiting for your permission${view.waitingTool ? ` (${view.waitingTool})` : ''}`
+  if (view.phase === 'error') return 'Buddy needs attention after an error'
+  if (view.phase === 'interrupted') return 'Buddy is waiting to resume after an interruption'
   return null
 }
 
@@ -127,12 +128,12 @@ export function activityBuddyState(view: ActivityView): 'update' | 'error' | nul
 }
 
 function nextStep(summary: Pick<ActivitySummary, 'tests' | 'toolErrors' | 'reason'>): string {
-  if (summary.reason === 'aborted') return 'Relire le bilan avant de reprendre le travail interrompu.'
-  if (summary.toolErrors || summary.reason === 'error' || summary.reason === 'refusal') return 'Examiner les erreurs signalées avant de poursuivre.'
+  if (summary.reason === 'aborted') return 'Review the summary before resuming the interrupted work.'
+  if (summary.toolErrors || summary.reason === 'error' || summary.reason === 'refusal') return 'Review the reported errors before continuing.'
   const latest = latestTests(summary.tests)
-  if (latest.some(test => test.status === 'failed')) return 'Examiner les tests échoués, puis les relancer.'
-  if (!latest.length || latest.some(test => test.status === 'unknown')) return 'Exécuter les tests et vérifier leur code de sortie.'
-  return 'Relire les modifications avant de poursuivre.'
+  if (latest.some(test => test.status === 'failed')) return 'Review the failed tests, then run them again.'
+  if (!latest.length || latest.some(test => test.status === 'unknown')) return 'Run the tests and check their exit codes.'
+  return 'Review the changes before continuing.'
 }
 
 function latestTests(tests: readonly TestEvidence[]): TestEvidence[] {
@@ -159,12 +160,12 @@ export function parseResume(text: string, cwd: string): ResumeSummary | null {
 }
 
 export function resumeDraft(resume: ResumeSummary): string {
-  return `Reprendre cet objectif : ${resume.objective}\n\nBilan sauvegardé à vérifier :\nFichiers : ${resume.files.join(', ') || 'aucun fichier observé'}.\nTests : ${testsCaption(resume.tests)}.\nProchaine étape : ${resume.nextStep}\nVérifie l'état actuel du projet avant de poursuivre.`
+  return `Resume this objective: ${resume.objective}\n\nSaved summary to review:\nFiles: ${resume.files.join(', ') || 'no files observed'}.\nTests: ${testsCaption(resume.tests)}.\nNext step: ${resume.nextStep}\nCheck the current project state before continuing.`
 }
 
 async function quietly($: EngineInterface, work: () => Promise<unknown>): Promise<void> {
   try { await work() } catch {
-    try { $.ui.log('Buddy : bilan indisponible pour cet événement.', { to: 'debug' }) } catch { /* observation must not change the chain */ }
+    try { $.ui.log('Buddy: summary unavailable for this event.', { to: 'debug' }) } catch { /* observation must not change the chain */ }
   }
 }
 
@@ -242,7 +243,7 @@ async function saveResume($: EngineInterface, resume: ResumeSummary): Promise<vo
     // fs.write creates missing parent directories; no separate host command.
     if (epoch === activityEpoch) await $.fs.write(projectFile(RESUME_FILE, projectRoot), serialized)
   } catch {
-    await update($, activityView, view => epoch !== activityEpoch ? view : { ...view, message: 'Résumé de reprise non sauvegardé.' })
+    await update($, activityView, view => epoch !== activityEpoch ? view : { ...view, message: 'Resume summary could not be saved.' })
   }
 }
 
@@ -251,7 +252,7 @@ async function recordManualTests($: EngineInterface, evidence: TestEvidence, mes
   const before = await read($, activityView)
   if (epoch !== activityEpoch) return
   sessionFiles = uniqueFiles([...sessionFiles, ...(before.resume?.files ?? [])], cwd)
-  sessionTests = [...(sessionTests.length ? sessionTests : before.resume?.tests ?? []), evidence].slice(-MAX_TESTS)
+  sessionTests = [...(sessionTests.length ? sessionTests: before.resume?.tests ?? []), evidence].slice(-MAX_TESTS)
   const savedAt = await $.clock.now()
   if (epoch !== activityEpoch) return
   await update($, activityView, current => {
@@ -273,26 +274,26 @@ async function openDiff($: EngineInterface): Promise<void> {
   try {
     const available = (await $.command.list()).some(command => command.name === 'diff')
     if (!available) {
-      await update($, activityView, view => ({ ...view, message: 'La commande /diff est indisponible dans cette version.' }))
+      await update($, activityView, view => ({ ...view, message: 'The /diff command is unavailable in this version.' }))
       return
     }
     await $.command.run({ command: 'diff' })
   } catch {
-    await update($, activityView, view => ({ ...view, message: 'Impossible d’ouvrir le diff.' }))
+    await update($, activityView, view => ({ ...view, message: 'Unable to open the diff.' }))
   }
 }
 
 async function openActivity($: EngineInterface): Promise<void> {
-  await $.ui.open({ id: ACTIVITY_PANE, title: 'Bilan du tour', focus: true })
+  await $.ui.open({ id: ACTIVITY_PANE, title: 'Turn summary', focus: true })
 }
 
 async function openResume($: EngineInterface): Promise<void> {
-  await $.ui.open({ id: RESUME_PANE, title: 'Reprendre avec Buddy', focus: true })
+  await $.ui.open({ id: RESUME_PANE, title: 'Resume with Buddy', focus: true })
 }
 
 async function prepareVerification($: EngineInterface): Promise<void> {
-  const result = await $.prompt.fill({ text: '\nExécute les tests adaptés aux modifications de ce tour et vérifie leur code de sortie.', mode: 'append' })
-  if (!result.isFilled) await update($, activityView, current => ({ ...current, message: 'Le brouillon est indisponible.' }))
+  const result = await $.prompt.fill({ text: '\nRun the tests relevant to this turn’s changes and check their exit codes.', mode: 'append' })
+  if (!result.isFilled) await update($, activityView, current => ({ ...current, message: 'The draft is unavailable.' }))
 }
 
 async function runTests($: EngineInterface): Promise<void> {
@@ -309,7 +310,7 @@ async function runTests($: EngineInterface): Promise<void> {
   } catch {
     if (epoch !== activityEpoch) return
     await recordManualTests($, testEvidence(view.testCommand.label, { interrupted: true }),
-      'Tests non vérifiés : exécution indisponible ou interrompue.')
+      'Tests unverified: execution was unavailable or interrupted.')
   } finally {
     await update($, activityView, current => epoch !== activityEpoch ? current : { ...current, testsRunning: false })
   }
@@ -338,8 +339,8 @@ export function registerActivity(on: On): void {
     const result = await next(e)
     await resetProjectActivity($, e.cwd)
     await quietly($, async () => {
-      await $.command.register({ name: ACTIVITY_PANE, description: 'Bilan des fichiers et tests observés' })
-      await $.command.register({ name: RESUME_PANE, description: 'Consulter le résumé de la dernière session' })
+      await $.command.register({ name: ACTIVITY_PANE, description: 'Summary of observed files and tests' })
+      await $.command.register({ name: RESUME_PANE, description: 'View the previous session summary' })
     })
     return result
   })
@@ -384,7 +385,7 @@ export function registerActivity(on: On): void {
   })
 
   on('classic.Notification', { notification_type: 'permission_prompt' }, async ($, e, next) => {
-    if (!e.agent_id && turnId && e.notification_type === 'permission_prompt') await quietly($, () => markPermission($, 'outil'))
+    if (!e.agent_id && turnId && e.notification_type === 'permission_prompt') await quietly($, () => markPermission($, 'tool'))
     return await next(e)
   })
 
@@ -458,11 +459,11 @@ export function registerActivity(on: On): void {
       await update($, activityView, current => epoch !== activityEpoch ? current : ({ ...current, last, resume, waitingTool: null,
         phase: (e.reason === 'aborted' ? 'interrupted' : e.reason !== 'answer' || view.toolErrors || failedTests ? 'error' : 'complete') as ActivityView['phase'] }))
       if (epoch !== activityEpoch) return
-      const line = `Bilan : ${view.files.length} fichier${view.files.length > 1 ? 's' : ''} · ${testsCaption(view.tests)}${view.toolErrors ? ` · ${view.toolErrors} erreur${view.toolErrors > 1 ? 's' : ''} outil` : ''}`
+      const line = `Summary: ${view.files.length} file${view.files.length > 1 ? 's' : ''} · ${testsCaption(view.tests)}${view.toolErrors ? ` · ${view.toolErrors} tool error${view.toolErrors > 1 ? 's' : ''}` : ''}`
       $.ui.log(`${line} · /${ACTIVITY_PANE}`)
       if (e.durationMs >= 60_000 && notifiedTurn !== e.turnId) {
         notifiedTurn = e.turnId
-        $.ui.toast(e.reason === 'answer' && !view.toolErrors && !failedTests ? 'Buddy a terminé. Le bilan est disponible.' : 'Buddy attend une action. Le bilan est disponible.')
+        $.ui.toast(e.reason === 'answer' && !view.toolErrors && !failedTests ? 'Buddy is done. The summary is ready.' : 'Buddy needs attention. The summary is ready.')
       }
       await saveResume($, resume)
     })
@@ -478,76 +479,76 @@ export function registerActivity(on: On): void {
     return { text: '' }
   })
 
-  on('ui.render', { component: 'AbovePrompt', surface: /^(terminal|desktop)$/ }, async ($, e, next) => {
-    const original = await next(e)
-    if (e.props.hasSurvey || e.props.isWorking || e.props.view.agentId || turnId !== null) return original
-    const view = await read($, activityView)
-    if (!view.last && !view.resume) return original
-    const { Box, Text, Button } = $.ui.resolve(e)
-    return <Box flexDirection="column">
-      {original}
-      <Box key="activity-band" flexDirection="column">
-        {view.last ? <Box flexDirection="column">
-          <Text>{`${view.last.files.length} fichier${view.last.files.length > 1 ? 's' : ''} modifié${view.last.files.length > 1 ? 's' : ''} · ${testsCaption(view.last.tests)}`}</Text>
-          <Box flexDirection="row" flexWrap="wrap" gap={1}>
-            <Button key="activity-band-diff" plain onPress={() => openDiff($)}>Voir le diff</Button>
-            <Button key="activity-band-verify" plain onPress={() => prepareVerification($)}>Préparer la vérification</Button>
-            <Button key="activity-band-open" plain onPress={() => openActivity($)}>Ouvrir le bilan</Button>
-          </Box>
-        </Box> : <Button key="activity-band-resume" plain onPress={() => openResume($)}>Consulter la reprise</Button>}
-      </Box>
-    </Box>
-  })
-
   on('ui.render', { component: 'Pane', requestId: ACTIVITY_PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const { Text } = $.ui.resolve(e)
+    const { Page, Card, Button, Toolbar } = panelChrome($.ui.resolve(e), e)
     const view = await read($, activityView)
     const summary = view.last
     const files = summary?.files ?? view.files
     const tests = summary?.tests ?? view.tests
-    return <Box flexDirection="column" gap={1} paddingX={1}>
-      <Text bold>Bilan du tour</Text>
-      <Text>{activityCaption(view) ?? (view.phase === 'working' ? 'Buddy travaille…' : 'Actions observées dans ce tour')}</Text>
-      <Text bold>{files.length} fichier{files.length > 1 ? 's' : ''} modifié{files.length > 1 ? 's' : ''}</Text>
-      {!files.length && <Text dimColor>Aucune écriture de fichier observée.</Text>}
-      {files.map(path => <Text key={`file-${path}`}>{path}</Text>)}
-      {files.length === MAX_FILES && <Text dimColor>Liste limitée aux 40 premiers chemins.</Text>}
-      <Text bold>{testsCaption(tests)}</Text>
-      {tests.map((test, index) => <Text key={`test-${index}`}>{test.label} : {test.status === 'passed' ? 'réussi' : test.status === 'failed' ? 'échoué' : 'résultat non vérifié'}{test.exitCode === null ? '' : ` (code ${test.exitCode})`}</Text>)}
-      {Boolean(summary?.toolErrors ?? view.toolErrors) && <Text color="yellow">{summary?.toolErrors ?? view.toolErrors} erreur(s) outil</Text>}
-      {summary && <Text dimColor>{summary.nextStep}</Text>}
-      <Box flexDirection="row" flexWrap="wrap" gap={1}>
-        <Button key="activity-diff" onPress={() => openDiff($)}>Voir le diff</Button>
-        <Button key="activity-test-draft" onPress={() => prepareVerification($)}>Préparer les tests</Button>
-        {view.testCommand && !view.testsRunning && turnId === null && <Button key="activity-run-tests" onPress={() => runTests($)}>{`Exécuter ${view.testCommand.label}`}</Button>}
-        {view.testsRunning && <Text dimColor>Tests en cours…</Text>}
-      </Box>
+    return <Page>
+      {paneNavigation($.ui.resolve(e), e, 'activity', pane => $.ui.open(pane))}
+      <Text bold>Turn summary</Text>
+      <Text>{activityCaption(view) ?? (view.phase === 'working' ? 'Buddy is working…' : 'Actions observed in this turn')}</Text>
+      {summary && <Card>
+        <Text bold>Next step</Text>
+        <Text>{summary.nextStep}</Text>
+      </Card>}
+      <Card>
+        <Text bold>{files.length} changed file{files.length > 1 ? 's' : ''}</Text>
+        {!files.length && <Text dimColor>No file writes observed.</Text>}
+        {files.map(path => <Text key={`file-${path}`}>{path}</Text>)}
+        {files.length === MAX_FILES && <Text dimColor>Showing the first 40 paths.</Text>}
+        <Toolbar><Button key="activity-diff" variant="primary" onPress={() => openDiff($)}>View diff</Button></Toolbar>
+        <Text dimColor>The diff may include changes made before this turn.</Text>
+      </Card>
+      <Card>
+        <Text bold>Verification</Text>
+        <Text>{testsCaption(tests)}</Text>
+        {tests.map((test, index) => <Text key={`test-${index}`} color={test.status === 'failed' ? 'red' : undefined}>{test.label} : {test.status === 'passed' ? 'passed' : test.status === 'failed' ? 'failed' : 'unverified result'}{test.exitCode === null ? '' : ` (code ${test.exitCode})`}</Text>)}
+        {Boolean(summary?.toolErrors ?? view.toolErrors) && <Text color="red">{summary?.toolErrors ?? view.toolErrors} tool error(s)</Text>}
+        <Toolbar>
+          {view.testCommand && !view.testsRunning && turnId === null && <Button key="activity-run-tests" onPress={() => runTests($)}>{`Run ${view.testCommand.label}`}</Button>}
+          <Button key="activity-test-draft" onPress={() => prepareVerification($)}>Prepare tests</Button>
+          {view.testsRunning && <Text dimColor>Tests running…</Text>}
+        </Toolbar>
+      </Card>
       {view.message && <Text dimColor>{view.message}</Text>}
-      <Text dimColor>Le diff peut inclure des modifications antérieures au tour.</Text>
-    </Box>
+    </Page>
   })
 
   on('ui.render', { component: 'Pane', requestId: RESUME_PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const { Box, Text } = $.ui.resolve(e)
+    const { Page, Card, Button, Toolbar } = panelChrome($.ui.resolve(e), e)
     const view = await read($, activityView)
     const saved = view.resume
-    return <Box flexDirection="column" gap={1} paddingX={1}>
-      <Text bold>Résumé de reprise</Text>
-      {!saved ? <Text dimColor>Aucun résumé sauvegardé pour ce projet.</Text> : <Box flexDirection="column" gap={1}>
-        <Text>Objectif : {saved.objective || 'aucun prompt utilisateur observé'}</Text>
-        <Text bold>Fichiers observés</Text>
-        {!saved.files.length && <Text dimColor>Aucun fichier observé.</Text>}
-        {saved.files.map(path => <Text key={`resume-${path}`}>{path}</Text>)}
-        <Text>{testsCaption(saved.tests)}</Text>
-        <Text>Prochaine étape : {saved.nextStep}</Text>
-        <Button key="resume-draft" onPress={async () => {
-          const result = await $.prompt.fill({ text: `\n${resumeDraft(saved)}`, mode: 'append' })
-          await update($, activityView, current => ({ ...current, message: result.isFilled
-            ? 'Résumé ajouté au brouillon. Vous pouvez le relire avant de l’envoyer.' : 'Le brouillon est indisponible.' }))
-        }}>Ajouter au brouillon</Button>
+    return <Page>
+      {paneNavigation($.ui.resolve(e), e, 'resume', pane => $.ui.open(pane))}
+      <Text bold>Resume summary</Text>
+      {!saved ? <Card><Text dimColor>No summary saved for this project.</Text></Card> : <Box flexDirection="column" gap={1}>
+        <Card>
+          <Text bold>Objective</Text>
+          <Text>{saved.objective || 'No user prompt observed.'}</Text>
+        </Card>
+        <Card>
+          <Text bold>Next step</Text>
+          <Text>{saved.nextStep}</Text>
+          <Toolbar><Button key="resume-draft" variant="primary" onPress={async () => {
+            const result = await $.prompt.fill({ text: `\n${resumeDraft(saved)}`, mode: 'append' })
+            await update($, activityView, current => ({ ...current, message: result.isFilled
+              ? 'Summary added to the draft. Review it before sending.' : 'The draft is unavailable.' }))
+          }}>Add to draft</Button></Toolbar>
+          <Text dimColor>Review the summary before sending your message.</Text>
+        </Card>
+        <Card>
+          <Text bold>Observed files</Text>
+          {!saved.files.length && <Text dimColor>No files observed.</Text>}
+          {saved.files.map(path => <Text key={`resume-${path}`}>{path}</Text>)}
+          <Text>{testsCaption(saved.tests)}</Text>
+        </Card>
       </Box>}
       {view.message && <Text dimColor>{view.message}</Text>}
-    </Box>
+    </Page>
   })
 }
 

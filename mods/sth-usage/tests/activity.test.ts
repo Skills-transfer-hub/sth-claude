@@ -72,6 +72,8 @@ function environment(on: On, files: Record<string, string> = {}, links: { parent
   on('fs.write', (_, e) => { writes.push({ path: e.path, text: e.text }); return { value: undefined } })
   on('ui.log', (_, e) => { logs.push(e.text); return { value: undefined } })
   on('ui.toast', (_, e) => { toasts.push(e.text); return { value: undefined } })
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.close', () => ({ value: undefined }))
   on('ui.open', (_, e) => { panes.push(e.id); return { value: { isPlaced: true } } })
   on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'Box', props: {}, children: [
     { type: 'Text', props: {}, children: ['Contenu existant'] },
@@ -113,7 +115,7 @@ describe('Evidence and bounded resume data', () => {
     for (const command of ['npm test || true', 'npm test; echo done', 'npm test && echo done']) {
       expect(testEvidence('npm test', { exitCode: 0 }, command)).toMatchObject({ status: 'unknown', exitCode: null })
     }
-    expect(testsCaption([])).toBe('Tests non exécutés')
+    expect(testsCaption([])).toBe('Tests not run')
     expect(testLabel('npm test -- --run')).toBe('npm test')
     expect(testLabel('cd repo && python3 -m pytest -q')).toBe('python3 -m pytest')
     expect(testLabel('echo "npm test passed"')).toBeNull()
@@ -162,7 +164,7 @@ describe('Activity observes the existing chain', () => {
     expect(result.text).toBe('Everything passed, including tests.')
     expect(env.view().last?.files).toEqual(['src/app.ts', 'src/shell.ts'])
     expect(env.view().last?.tests).toEqual([])
-    expect(activityCaption(env.view())).toBe('Buddy a terminé')
+    expect(activityCaption(env.view())).toBe('Buddy is done')
     expect(env.processes.filter(argv => testLabel(argv.join(' ')))).toEqual([])
     expect(env.toasts).toEqual([])
     expect(env.writes.find(write => write.path.endsWith(RESUME_FILE))?.text).not.toContain('Everything passed')
@@ -190,7 +192,7 @@ describe('Activity observes the existing chain', () => {
     const env = environment(on)
     await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
     await $.turn.start({ text: 'Work', turnId: 'query-turn' })
-    expect(activityCaption(env.view())).toBe('Buddy travaille…')
+    expect(activityCaption(env.view())).toBe('Buddy is working…')
     await $.tool.check({ tool: 'Bash', input: { command: 'npm test' } })
     expect(env.view().phase).toBe('working')
   })
@@ -258,14 +260,14 @@ describe('Activity observes the existing chain', () => {
     await $.command.run({ command: 'observed-process-test', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 180 } })
     await $.turn.complete({ answer: '', durationMs: 60_000, turnId: 'failed-tests', isAborted: false, reason: 'answer' })
     expect(env.view().phase).toBe('error')
-    expect(env.view().last?.nextStep).toContain('tests échoués')
-    expect(env.toasts).toEqual(['Buddy attend une action. Le bilan est disponible.'])
+    expect(env.view().last?.nextStep).toContain('failed tests')
+    expect(env.toasts).toEqual(['Buddy needs attention. The summary is ready.'])
     const ui = await $.ui.mount({ plugin: 'sth-usage', component: 'Pane', requestId: ACTIVITY_PANE, surface: 'terminal', props: paneProps() })
     await ui.press({ key: 'activity-run-tests' })
     expect(env.view().phase).toBe('complete')
-    expect(env.view().last?.nextStep).toBe('Relire les modifications avant de poursuivre.')
+    expect(env.view().last?.nextStep).toBe('Review the changes before continuing.')
     expect(env.view().tests.map(test => test.status)).toEqual(['failed', 'passed'])
-    expect(env.view().resume?.nextStep).toBe('Relire les modifications avant de poursuivre.')
+    expect(env.view().resume?.nextStep).toBe('Review the changes before continuing.')
     await ui.unmount()
   })
 
@@ -304,14 +306,14 @@ describe('Activity observes the existing chain', () => {
       await $.turn.start({ text: 'Work', turnId: 'save-unsafe' })
       await $.turn.complete({ answer: '', durationMs: 1, turnId: 'save-unsafe', isAborted: false, reason: 'answer' })
       expect(env.writes).toEqual([])
-      expect(env.view().message).toBe('Résumé de reprise non sauvegardé.')
+      expect(env.view().message).toBe('Resume summary could not be saved.')
     })
   }
 })
 
 for (const surface of ['terminal', 'desktop'] as const) {
   describe(`Activity actions on ${surface}`, () => {
-    test('the completed-turn band composes with existing content and exposes explicit actions', async ($, on) => {
+    test('a completed turn leaves the prompt unchanged and keeps actions in its pane', async ($, on) => {
       const env = environment(on)
       on('tool.call', { tool: 'Write' }, (_, e) => ({ result: {
         type: 'create', filePath: e.file_path, content: e.content, originalFile: null, structuredPatch: PATCH,
@@ -323,26 +325,36 @@ for (const surface of ['terminal', 'desktop'] as const) {
       const band = await $.ui.mount({ plugin: 'sth-usage', component: 'AbovePrompt', requestId: 'above-activity',
         surface, props: bandProps(), viewport: { columns: 180, rows: 50 } })
       expect(await band.find({ type: 'Text', text: 'Contenu existant' })).toBeDefined()
-      expect(await band.find({ type: 'Text', text: '1 fichier modifié · Tests non exécutés' })).toBeDefined()
-      await band.press({ key: 'activity-band-diff' })
-      expect(env.commands).toContain('diff')
-      await band.press({ key: 'activity-band-verify' })
-      expect(env.drafts).toHaveLength(1)
-      expect(env.drafts[0]).toContain('code de sortie')
-      await band.press({ key: 'activity-band-open' })
-      expect(env.panes).toContain(ACTIVITY_PANE)
-      await band.redraw(bandProps(true))
       expect(await band.find({ key: 'activity-band' })).toBeUndefined()
+      expect(await band.find({ type: 'Text', text: '1 changed file · Tests not run' })).toBeUndefined()
+      expect(await band.find({ type: 'Button' })).toBeUndefined()
+      expect(env.drafts).toEqual([])
+      await $.command.run({ command: 'sth-activity', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 180 } })
+      expect(env.panes).toContain(ACTIVITY_PANE)
+      const pane = await $.ui.mount({ plugin: 'sth-usage', component: 'Pane', requestId: ACTIVITY_PANE,
+        surface, props: paneProps(), viewport: { columns: 180, rows: 50 } })
+      expect(await pane.find({ type: 'Text', text: 'Turn summary' })).toBeDefined()
+      expect(await pane.find({ type: 'Text', text: '1 changed file' })).toBeDefined()
+      await pane.press({ key: 'activity-diff' })
+      expect(env.commands).toContain('diff')
+      await pane.press({ key: 'activity-test-draft' })
+      expect(env.drafts).toHaveLength(1)
+      expect(env.drafts[0]).toContain('exit codes')
+      await pane.unmount()
+      await band.redraw(bandProps(true))
+      expect(await band.find({ type: 'Button' })).toBeUndefined()
       expect(await band.find({ type: 'Text', text: 'Contenu existant' })).toBeDefined()
       await band.redraw(bandProps(false, true))
-      expect(await band.find({ key: 'activity-band' })).toBeUndefined()
+      expect(await band.find({ type: 'Button' })).toBeUndefined()
+      expect(await band.find({ type: 'Text', text: 'Contenu existant' })).toBeDefined()
       await band.redraw(bandProps())
       await $.turn.start({ text: 'Next', turnId: 'band-next' })
-      expect(await band.find({ key: 'activity-band' })).toBeUndefined()
+      expect(await band.find({ type: 'Button' })).toBeUndefined()
+      expect(await band.find({ type: 'Text', text: 'Contenu existant' })).toBeDefined()
       await band.unmount()
     })
 
-    test('a saved session offers consultation without filling or submitting a prompt', async ($, on) => {
+    test('a saved session leaves the prompt unchanged and opens through its command', async ($, on) => {
       const saved: ResumeSummary = { version: 1, savedAt: 100, objective: 'Terminer la tâche',
         files: ['app.ts'], tests: [], nextStep: 'Exécuter les tests.' }
       const env = environment(on, { [RESUME_FILE]: JSON.stringify(saved) })
@@ -351,8 +363,10 @@ for (const surface of ['terminal', 'desktop'] as const) {
       await $.session.start({ cwd: ROOT, surface, isInteractive: true })
       const band = await $.ui.mount({ plugin: 'sth-usage', component: 'AbovePrompt', requestId: 'above-resume',
         surface, props: bandProps(), viewport: { columns: 180, rows: 50 } })
-      expect(await band.find({ key: 'activity-band-resume' })).toBeDefined()
-      await band.press({ key: 'activity-band-resume' })
+      expect(await band.find({ type: 'Text', text: 'Contenu existant' })).toBeDefined()
+      expect(await band.find({ key: 'activity-band' })).toBeUndefined()
+      expect(await band.find({ type: 'Button' })).toBeUndefined()
+      await $.command.run({ command: 'sth-resume', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 180 } })
       expect(env.panes).toContain(RESUME_PANE)
       expect(env.drafts).toEqual([])
       expect(submitted).toBe(0)

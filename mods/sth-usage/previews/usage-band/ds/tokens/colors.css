@@ -1,0 +1,105 @@
+/* ============================================================================
+   STH — Color tokens
+   Strictly neutral, OKLch, perceptually uniform. The brand identity is carried
+   by Buddy (the ASCII mascot), NOT by an accent hue. Every surface has a paired
+   *-foreground. Mirrors src/app/globals.css from the sth-dashboard codebase.
+   ============================================================================ */
+
+:root {
+  /* --- Base neutral ramp (grayscale, OKLch lightness only) ------------------ */
+  --gray-0: oklch(1 0 0);        /* pure white  */
+  --gray-50: oklch(0.985 0 0);
+  --gray-100: oklch(0.97 0 0);
+  --gray-200: oklch(0.922 0 0);
+  --gray-400: oklch(0.708 0 0);
+  --gray-500: oklch(0.556 0 0);
+  --gray-600: oklch(0.439 0 0);
+  --gray-700: oklch(0.371 0 0);
+  --gray-800: oklch(0.269 0 0);
+  --gray-900: oklch(0.205 0 0);
+  --gray-950: oklch(0.145 0 0);  /* near-black  */
+
+  /* --- Brand semantic accent (the only non-gray) ---------------------------- */
+  --destructive: oklch(0.577 0.245 27.325);  /* red — errors / delete         */
+  --terminal-accent: oklch(0.7 0.15 155);    /* emerald — CLI success / banner */
+
+  /* --- Semantic surface roles (light theme) --------------------------------- */
+  --background: var(--gray-0);
+  --foreground: var(--gray-950);
+  --card: var(--gray-0);
+  --card-foreground: var(--gray-950);
+  --popover: var(--gray-0);
+  --popover-foreground: var(--gray-950);
+
+  --primary: var(--gray-900);            /* near-black action          */
+  --primary-foreground: var(--gray-50);
+  --secondary: var(--gray-100);          /* low surface / 2ndary action */
+  --secondary-foreground: var(--gray-900);
+  --muted: var(--gray-100);              /* muted surface              */
+  --muted-foreground: var(--gray-500);   /* secondary text             */
+  --accent: var(--gray-100);             /* hover / light emphasis     */
+  --accent-foreground: var(--gray-900);
+
+  --border: var(--gray-200);
+  --input: var(--gray-200);
+  --ring: var(--gray-400);               /* focus ring                 */
+
+  /* --- Sidebar (dashboard chrome) ------------------------------------------- */
+  --sidebar: var(--gray-50);
+  --sidebar-foreground: var(--gray-950);
+  --sidebar-primary: var(--gray-900);
+  --sidebar-primary-foreground: var(--gray-50);
+  --sidebar-accent: var(--gray-100);
+  --sidebar-accent-foreground: var(--gray-900);
+  --sidebar-border: var(--gray-200);
+  --sidebar-ring: var(--gray-400);
+
+  /* --- Chart palette (grayscale steps) -------------------------------------- */
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+
+  /* --- Terminal surface (dark, fixed regardless of theme) ------------------- */
+  --terminal-bg: oklch(0.18 0 0);        /* ≈ zinc-950 */
+  --terminal-chrome: oklch(0.23 0 0);    /* ≈ zinc-900 */
+  --terminal-border: oklch(0.30 0 0);    /* ≈ zinc-800 */
+  --terminal-fg: oklch(0.93 0 0);        /* ≈ zinc-100 */
+  --terminal-muted: oklch(0.55 0 0);     /* ≈ zinc-500 */
+}
+
+/* ----------------------------------------------------------------------------
+   Dark theme — toggled by `.dark` on a root element (next-themes convention).
+   ---------------------------------------------------------------------------- */
+.dark {
+  --background: var(--gray-950);
+  --foreground: var(--gray-50);
+  --card: var(--gray-900);
+  --card-foreground: var(--gray-50);
+  --popover: var(--gray-900);
+  --popover-foreground: var(--gray-50);
+
+  --primary: var(--gray-200);
+  --primary-foreground: var(--gray-900);
+  --secondary: var(--gray-800);
+  --secondary-foreground: var(--gray-50);
+  --muted: var(--gray-800);
+  --muted-foreground: var(--gray-400);
+  --accent: var(--gray-800);
+  --accent-foreground: var(--gray-50);
+
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: var(--gray-500);
+
+  --sidebar: var(--gray-900);
+  --sidebar-foreground: var(--gray-50);
+  --sidebar-primary: var(--gray-200);
+  --sidebar-primary-foreground: var(--gray-900);
+  --sidebar-accent: var(--gray-800);
+  --sidebar-accent-foreground: var(--gray-50);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: var(--gray-500);
+}

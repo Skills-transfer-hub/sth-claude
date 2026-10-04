@@ -1,0 +1,54 @@
+/* ============================================================================
+   STH — Base element styles
+   Applies the type system, OpenType features and antialiasing globally so any
+   consumer page inherits the STH feel by linking styles.css alone.
+   ============================================================================ */
+
+* {
+  border-color: var(--border);
+}
+
+html {
+  font-family: var(--font-sans);
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  font-feature-settings: var(--font-features-heading);
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-heading);
+  font-feature-settings: var(--font-features-heading);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-snug);
+  margin: 0;
+}
+
+pre, code, kbd, samp {
+  font-family: var(--font-mono);
+  font-feature-settings: var(--font-features-mono);
+}
+
+::selection {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
