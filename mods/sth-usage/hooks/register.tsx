@@ -557,11 +557,10 @@ async function buddyElement(
     )
   }
   if (e.surface === 'desktop') {
-    const { Client } = $.ui.resolve(e)
     if (fikaFrame !== null) {
-      return Client({ module: '../ui/fika.ts', key: `buddy-fika-scene-${fikaStartedAt}`, props: { startFrame: fikaFrame, caption } })
+      return $.ui.resolve(e).Client({ module: '../ui/fika.ts', key: `buddy-fika-scene-${fikaStartedAt}`, props: { startFrame: fikaFrame, caption } })
     }
-    return Client({ module: '../ui/buddy.ts', key: `buddy-${state}`, props: { state, caption } })
+    return $.ui.resolve(e).Client({ module: '../ui/buddy.ts', key: `buddy-${state}`, props: { state, caption } })
   }
   const { Text } = $.ui.resolve(e)
   return <Text>{caption}</Text>

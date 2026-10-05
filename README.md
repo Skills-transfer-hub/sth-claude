@@ -1,4 +1,4 @@
-# Buddy by STH · 0.3.3
+# Buddy by STH · 0.3.4
 
 This branch contains the generated distribution. Source code and original artwork remain on [main](https://github.com/Skills-transfer-hub/sth-claude/tree/main).
 
@@ -13,4 +13,4 @@ Restart Claude Code or run `/reload-plugins`, then `/sth-usage`. To receive futu
 
 See [usage](mods/sth-usage/README.md), [privacy](mods/sth-usage/PRIVACY.md), [licensing](mods/sth-usage/LICENSE) and the bundled third-party notices.
 
-Built from [d8b90ce](https://github.com/Skills-transfer-hub/sth-claude/commit/d8b90ce8f2e78294e1896a7bb0bb81f2c8d1f3bb); `release.json` records the source and file hashes.
+Built from [9255008](https://github.com/Skills-transfer-hub/sth-claude/commit/9255008c9bf69159100c65ad32ef0ada6af00d03); `release.json` records the source and file hashes.
