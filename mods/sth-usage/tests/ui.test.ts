@@ -666,7 +666,8 @@ for (const surface of SURFACES) {
       await buddy.unmount()
     })
 
-    test('thought appears only in Buddy and plays one nine-second animation from the start on each click', async ($, on) => {
+    // Several minutes of virtual time still render thousands of frames on CI.
+    test('thought appears only in Buddy and plays one nine-second animation from the start on each click', { timeoutMs: 15_000 }, async ($, on) => {
       const { clock, blits } = fikaEnvironment(on)
       await $.session.start({ cwd: '/project', surface, isInteractive: true })
       const mount = (requestId: string) => $.ui.mount({
@@ -768,7 +769,7 @@ for (const surface of SURFACES) {
       await buddy.unmount()
     })
 
-    test('typing removes the thought permanently through erasing and reloading', async ($, on) => {
+    test('typing removes the thought permanently through erasing and reloading', { timeoutMs: 15_000 }, async ($, on) => {
       const { clock, values } = fikaEnvironment(on)
       await $.session.start({ cwd: '/project', surface, isInteractive: true })
       await clock.advance(120_000)
