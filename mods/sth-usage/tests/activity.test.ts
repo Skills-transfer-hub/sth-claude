@@ -1,5 +1,6 @@
 import type { On, RenderPropsOf } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 import {
   ACTIVITY_PANE, RESUME_FILE, RESUME_PANE, parseResume, safeObjective, safeProjectPath,
   testEvidence, testLabel, testsCaption, activityCaption,
@@ -105,6 +106,49 @@ function environment(on: On, files: Record<string, string> = {}, links: { parent
     view: () => values.get('activityView') as ActivityView }
 }
 
+function latch() {
+  let release!: () => void
+  const promise = new Promise<void>(resolve => { release = resolve })
+  return { promise, release }
+}
+
+function controlledCalls($: Engine, on: On) {
+  let executions = 0
+  const calls = new Map<string, { checked: ReturnType<typeof latch>; finish: ReturnType<typeof latch>;
+    input: unknown; decision: 'allow' | 'ask' | 'deny'; agentId?: string; deny?: string; throws?: boolean }>()
+  on('tool.check', { tool: 'Bash' }, (_, e) => ({
+    decision: (e.tool_use_id ? calls.get(e.tool_use_id)?.decision : undefined) ?? 'ask',
+    reason: 'Confirm before execution',
+  }))
+  on('tool.call', { tool: 'Bash' }, async (_, e) => {
+    executions++
+    const call = calls.get(e.tool_use_id)!
+    expect(e.agentId).toBe(call.agentId)
+    await $.tool.check({ tool: 'Bash', input: call.input, tool_use_id: e.tool_use_id })
+    call.checked.release()
+    await call.finish.promise
+    if (call.throws) throw new Error('Existing tool implementation failed')
+    return call.deny ? { deny: call.deny } : { result: { stdout: e.command, stderr: '', interrupted: false } }
+  })
+  return {
+    executions: () => executions,
+    async start(id: string, command: string, options: { input?: unknown; agentId?: string; decision?: 'allow' | 'ask' | 'deny'; deny?: string; throws?: boolean } = {}) {
+      const call = { checked: latch(), finish: latch(), input: options.input ?? { command },
+        decision: options.decision ?? 'ask', agentId: options.agentId, deny: options.deny, throws: options.throws }
+      calls.set(id, call)
+      // The test engine raises the full event, including the agent loop. Its
+      // tool.call overload retains the narrower production-call declaration.
+      const event = { tool: 'Bash' as const, tool_use_id: id, command, agentId: options.agentId }
+      const result = $.tool.call(event)
+      await call.checked.promise
+      return { result, finish: call.finish.release }
+    },
+    request(command: string, options: { input?: unknown; agentId?: string } = {}) {
+      return $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: options.input ?? { command }, agent_id: options.agentId })
+    },
+  }
+}
+
 describe('Evidence and bounded resume data', () => {
   test('test results require a real exit code rather than reassuring output', () => {
     expect(testEvidence('npm test', { stdout: 'all tests passed' })).toMatchObject({ status: 'unknown', exitCode: null })
@@ -173,13 +217,17 @@ describe('Activity observes the existing chain', () => {
 
   test('permissions and tool errors preserve verdicts and clear waiting state on completion', async ($, on) => {
     const env = environment(on)
-    on('tool.call', { tool: 'Bash' }, () => ({ deny: 'Existing policy refuses this command' }))
+    const calls = controlledCalls($, on)
     await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
     await $.turn.start({ text: 'Run tests', turnId: 'turn-2' })
     const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'npm test' }, tool_use_id: 'bash-2' })
     expect(verdict).toEqual({ decision: 'ask', reason: 'Confirm before execution' })
+    const pending = await calls.start('bash-2', 'npm test', { deny: 'Existing policy refuses this command' })
+    expect(env.view().phase).toBe('working')
+    await calls.request('npm test')
     expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'Bash' })
-    const result = await $.tool.call({ tool: 'Bash', tool_use_id: 'bash-2', command: 'npm test' })
+    pending.finish()
+    const result = await pending.result
     expect(result).toEqual({ deny: 'Existing policy refuses this command' })
     expect(env.view()).toMatchObject({ phase: 'error', waitingTool: null, toolErrors: 1 })
     expect(env.view().tests).toEqual([])
@@ -208,7 +256,9 @@ describe('Activity observes the existing chain', () => {
       const returned = await $.tool.check({ tool: 'Bash', input: { command: 'npm test' }, tool_use_id: `permission-${decision}` })
       expect(returned).toEqual(original)
       expect(checks).toBe(1)
-      expect(env.view()).toMatchObject({ phase: decision === 'ask' ? 'permission' : 'working', waitingTool: decision === 'ask' ? 'Bash' : null })
+      // A check can still be settled automatically. Only a real request marks
+      // Buddy as waiting; queries and verdict observation are no longer used.
+      expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
       expect(original).toEqual({ decision, reason: 'The existing policy decides', rule: 'Bash(npm test)', hook: 'PreToolUse' })
     })
   }
@@ -225,6 +275,306 @@ describe('Activity observes the existing chain', () => {
     expect(checks).toBe(1)
     expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
   })
+
+  for (const failed of [false, true]) {
+    test(`an unrelated parallel ${failed ? 'denial' : 'completion'} cannot clear a real permission request`, async ($, on) => {
+      const env = environment(on)
+      const calls = controlledCalls($, on)
+      await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+      await $.turn.start({ text: 'Parallel work', turnId: 'parallel' })
+      const requested = await calls.start('requested', 'needs permission')
+      const unrelated = await calls.start('unrelated', 'already allowed', { decision: failed ? 'deny' : 'allow', deny: failed ? 'Policy denial' : undefined })
+      await calls.request('needs permission')
+      unrelated.finish()
+      await unrelated.result
+      // Preserve the existing error precedence, while retaining the pending
+      // request internally and its waitingTool in the view.
+      expect(env.view()).toMatchObject({ phase: failed ? 'error' : 'permission', waitingTool: 'Bash', toolErrors: Number(failed) })
+      requested.finish()
+      await requested.result
+      expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+    })
+  }
+
+  test('two distinct requests remain waiting until both corresponding calls complete', async ($, on) => {
+    const env = environment(on)
+    const calls = controlledCalls($, on)
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Parallel requests', turnId: 'two-requests' })
+    const first = await calls.start('first', 'first request')
+    const second = await calls.start('second', 'second request')
+    await calls.request('first request')
+    await calls.request('second request')
+    first.finish()
+    await first.result
+    expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'Bash' })
+    second.finish()
+    await second.result
+    expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+  })
+
+  for (const requestCount of [1, 2]) {
+    for (const requestedFinishesFirst of [true, false]) {
+      test(`identical inputs with ${requestCount} request(s), requested call finishes ${requestedFinishesFirst ? 'first' : 'last'}, conservatively wait for both`, async ($, on) => {
+        const env = environment(on)
+        const calls = controlledCalls($, on)
+        await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+        await $.turn.start({ text: 'Identical calls', turnId: 'identical' })
+        const first = await calls.start('first', 'same command')
+        const second = await calls.start('second', 'same command', { decision: requestCount === 2 ? 'ask' : 'allow' })
+        await calls.request('same command')
+        if (requestCount === 2) await calls.request('same command')
+        const ordered = requestedFinishesFirst ? [first, second] : [second, first]
+        ordered[0]!.finish()
+        await ordered[0]!.result
+        // With one request and its true call already complete, this is the
+        // explicit tradeoff: the id-less event cannot distinguish that case
+        // from the other identical call still awaiting permission.
+        expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'Bash' })
+        ordered[1]!.finish()
+        await ordered[1]!.result
+        expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+      })
+    }
+  }
+
+  test('rewritten final inputs and reordered object keys correlate with the checked call', async ($, on) => {
+    const env = environment(on)
+    const calls = controlledCalls($, on)
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Rewritten calls', turnId: 'rewritten' })
+    const requested = await calls.start('rewritten', 'original command', { input: { command: 'rewritten command', details: { z: 1, a: [2, 3] } } })
+    const other = await calls.start('other', 'original command', { decision: 'allow' })
+    await calls.request('', { input: { details: { a: [2, 3], z: 1 }, command: 'rewritten command' } })
+    other.finish()
+    await other.result
+    expect(env.view().phase).toBe('permission')
+    requested.finish()
+    await requested.result
+    expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+  })
+
+  test('subagent checks, requests, notifications and completions do not change main waiting state', async ($, on) => {
+    const env = environment(on)
+    const calls = controlledCalls($, on)
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Main work', turnId: 'main' })
+    const agent = await calls.start('agent-call', 'same command', { agentId: 'worker' })
+    await calls.request('same command', { agentId: 'worker' })
+    await $.classic.Notification({ notification_type: 'permission_prompt', message: 'Permission needed', agent_id: 'worker' })
+    expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+    const main = await calls.start('main-call', 'same command')
+    await calls.request('same command')
+    main.finish()
+    await main.result
+    expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+    agent.finish()
+    await agent.result
+    expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+  })
+
+  test('an unmatched request conservatively retains every same-tool candidate', async ($, on) => {
+    const env = environment(on)
+    const calls = controlledCalls($, on)
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Unmatched input', turnId: 'unmatched-input' })
+    const requested = await calls.start('requested', 'observed input')
+    const other = await calls.start('other', 'unrelated same tool', { decision: 'allow' })
+    // tool.check input is pinned. This exercises the defensive unmatched
+    // fallback, not an assertion that another hook may rewrite that input.
+    await calls.request('unmatched event input')
+    requested.finish()
+    await requested.result
+    expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'Bash' })
+    other.finish()
+    await other.result
+    expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+  })
+
+  test('large checked input stays transient and is not written into the activity or resume', async ($, on) => {
+    const env = environment(on)
+    const calls = controlledCalls($, on)
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Large input', turnId: 'large-input' })
+    const content = 'sensitive-tool-input-'.repeat(100_000)
+    const pending = await calls.start('large', 'command', { input: { command: 'command', content } })
+    await calls.request('command', { input: { content, command: 'command' } })
+    expect(env.view().phase).toBe('permission')
+    pending.finish()
+    await pending.result
+    await $.turn.complete({ turnId: 'large-input', answer: '', durationMs: 1, isAborted: false, reason: 'answer' })
+    expect(JSON.stringify(env.view())).not.toContain('sensitive-tool-input')
+    expect(JSON.stringify(env.writes)).not.toContain('sensitive-tool-input')
+    expect(JSON.stringify(env.logs)).not.toContain('sensitive-tool-input')
+  })
+
+  test('a comparison budget exhaustion retains possible candidates without blocking or choosing an id', async ($, on) => {
+    const env = environment(on)
+    const calls = controlledCalls($, on)
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Complex input', turnId: 'complex-input' })
+    const details = Array.from({ length: 9000 }, (value, index) => index)
+    const requested = await calls.start('complex', 'complex input', { input: { command: 'complex input', details } })
+    const other = await calls.start('other', 'complex input', { decision: 'allow', input: { command: 'complex input', details: [...details] } })
+    await calls.request('', { input: { command: 'complex input', details: [...details] } })
+    requested.finish()
+    await requested.result
+    expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'Bash' })
+    other.finish()
+    await other.result
+    expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+  })
+
+  test('an exact candidate does not exclude another candidate when the shared comparison budget runs out', async ($, on) => {
+    const env = environment(on)
+    const calls = controlledCalls($, on)
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Mixed comparison results', turnId: 'mixed-comparison' })
+    const details = Array.from({ length: 5000 }, (value, index) => index)
+    // The first comparison fits within 8192 nodes; the second cannot finish
+    // within the remaining shared budget. Neither may be discarded.
+    const exact = await calls.start('exact', 'same command', { decision: 'allow', input: { command: 'same command', details } })
+    const uncertain = await calls.start('uncertain', 'same command', { input: { command: 'same command', details: [...details] } })
+    await calls.request('', { input: { command: 'same command', details: [...details] } })
+    exact.finish()
+    await exact.result
+    expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'Bash' })
+    uncertain.finish()
+    await uncertain.result
+    expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+  })
+
+  test('a denied continuation leaves other requests tracked and is executed only once', async ($, on) => {
+    const env = environment(on)
+    const calls = controlledCalls($, on)
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Concurrent failure', turnId: 'concurrent-throw' })
+    const requested = await calls.start('requested', 'still pending')
+    const failing = await calls.start('failing', 'throws', { throws: true })
+    await calls.request('still pending')
+    await calls.request('throws')
+    const rejected = expect(failing.result).rejects.toThrow()
+    failing.finish()
+    await rejected
+    expect(calls.executions()).toBe(2)
+    expect(env.view()).toMatchObject({ phase: 'error', waitingTool: 'Bash' })
+    const allowed = await calls.start('allowed', 'another allowed call', { decision: 'allow' })
+    allowed.finish()
+    await allowed.result
+    expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'Bash' })
+    requested.finish()
+    await requested.result
+    expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+  })
+
+  test('unmatched requests remain until turn end and later session events cannot revive them without a turn', async ($, on) => {
+    const env = environment(on)
+    const calls = controlledCalls($, on)
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Unmatched request', turnId: 'unmatched' })
+    await calls.request('call not observed')
+    const unrelated = await calls.start('unrelated', 'unrelated command')
+    unrelated.finish()
+    await unrelated.result
+    expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'Bash' })
+    await $.turn.complete({ turnId: 'unmatched', answer: '', durationMs: 1, isAborted: true, reason: 'aborted' })
+    await calls.request('late request')
+    await $.classic.Notification({ notification_type: 'permission_prompt', message: 'Late notification' })
+    expect(env.view()).toMatchObject({ phase: 'interrupted', waitingTool: null })
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await calls.request('stale session request')
+    expect(env.view()).toMatchObject({ phase: 'ready', waitingTool: null })
+  })
+
+  test('id-less sandbox notifications conservatively include every active main call', async ($, on) => {
+    const env = environment(on)
+    const calls = controlledCalls($, on)
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Network permission', turnId: 'network' })
+    const first = await calls.start('network', 'network request')
+    const second = await calls.start('other', 'other command', { decision: 'allow' })
+    await $.classic.Notification({ notification_type: 'permission_prompt', message: 'Permission needed' })
+    second.finish()
+    await second.result
+    expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'tool' })
+    first.finish()
+    await first.result
+    const identified = await calls.start('identified', 'known request')
+    const unrelated = await calls.start('unrelated', 'unrelated command', { decision: 'allow' })
+    await calls.request('known request')
+    await $.classic.Notification({ notification_type: 'permission_prompt', message: 'Permission needed' })
+    identified.finish()
+    await identified.result
+    // The notification could describe a second sandbox request, so it cannot
+    // safely be discarded merely because another request is already known.
+    expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'tool' })
+    unrelated.finish()
+    await unrelated.result
+    expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+  })
+
+  for (const reset of ['abort', 'new-turn', 'project'] as const) {
+    test(`${reset} clears requests and ignores a late completion even when the call id is reused`, async ($, on) => {
+      const env = environment(on)
+      const calls = controlledCalls($, on)
+      await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+      await $.turn.start({ text: 'Old work', turnId: 'old' })
+      const old = await calls.start('reused', 'old command')
+      await calls.request('old command')
+      if (reset === 'abort') {
+        await $.turn.complete({ turnId: 'old', answer: '', durationMs: 10, isAborted: true, reason: 'aborted' })
+        expect(env.view()).toMatchObject({ phase: 'interrupted', waitingTool: null })
+      } else if (reset === 'project') {
+        await $.classic.CwdChanged({ old_cwd: ROOT, new_cwd: '/next', cwd: '/next' })
+        expect(env.view()).toMatchObject({ phase: 'ready', waitingTool: null })
+      }
+      await $.turn.start({ text: 'New work', turnId: 'new' })
+      const fresh = await calls.start('reused', 'new command')
+      await calls.request('new command')
+      old.finish()
+      await old.result
+      expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'Bash' })
+      fresh.finish()
+      await fresh.result
+      expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+    })
+  }
+
+  test('a rejected tool continuation stays rejected and clears its waiting candidate', async ($, on) => {
+    const env = environment(on)
+    const calls = controlledCalls($, on)
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Failing call', turnId: 'throwing' })
+    const pending = await calls.start('failure', 'command', { throws: true })
+    await calls.request('command')
+    const rejected = expect(pending.result).rejects.toThrow()
+    pending.finish()
+    await rejected
+    expect(calls.executions()).toBe(1)
+    expect(env.view()).toMatchObject({ phase: 'error', waitingTool: null })
+    // No invented permission decision or retry: a later allowed call can run.
+    const following = await calls.start('following', 'later command')
+    following.finish()
+    await following.result
+    expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+  })
+
+  for (const original of [
+    { decision: { behavior: 'allow' as const, updatedInput: { command: 'edited by the existing hook' }, updatedPermissions: [{ type: 'setMode' as const, mode: 'default' as const, destination: 'session' as const }] } },
+    { decision: { behavior: 'deny' as const, message: 'Existing hook refuses the call', interrupt: true as const } },
+  ]) {
+    test(`PermissionRequest ${original.decision.behavior} metadata remains unchanged`, async ($, on) => {
+      let requests = 0
+      on('classic.PermissionRequest', { tool_name: 'Bash' }, () => { requests++; return original })
+      const env = environment(on)
+      await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+      await $.turn.start({ text: 'Existing hook', turnId: 'classic-verdict' })
+      const returned = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'command' } })
+      expect(returned).toEqual(original)
+      expect(requests).toBe(1)
+      expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'Bash' })
+    })
+  }
 
   test('only a long main turn emits one toast', async ($, on) => {
     const env = environment(on)
