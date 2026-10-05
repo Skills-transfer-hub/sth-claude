@@ -202,8 +202,12 @@ let cwd = ''
 let activityEpoch = 0
 let turnId: string | null = null
 let notifiedTurn: string | null = null
-const permissions = new Set<string>()
-const toolAgents = new Map<string, string | undefined>()
+type ObservedCall = { tool: string; agentId?: string; epoch: number }
+type PermissionWait = { tool: string; candidates: Set<ObservedCall> | null }
+let permissionEpoch = 0
+const activeCalls = new Map<string, ObservedCall>()
+const checkedInputs = new Map<ObservedCall, unknown>()
+const permissionWaits = new Set<PermissionWait>()
 let sessionFiles: string[] = []
 let sessionTests: TestEvidence[] = []
 
@@ -213,9 +217,63 @@ async function addTests($: EngineInterface, evidence: TestEvidence): Promise<voi
   await update($, activityView, view => ({ ...view, tests: [...view.tests, evidence].slice(-MAX_TESTS) }))
 }
 
-async function markPermission($: EngineInterface, tool: string, id?: string): Promise<void> {
-  if (id) permissions.add(id)
-  await update($, activityView, view => ({ ...view, phase: 'permission' as const, waitingTool: tool.slice(0, 48) }))
+function resetPermissions(): void {
+  permissionEpoch++
+  activeCalls.clear()
+  checkedInputs.clear()
+  permissionWaits.clear()
+}
+
+function samePermissionInput(left: unknown, right: unknown, budget: { remaining: number }): boolean | undefined {
+  const pairs: [unknown, unknown][] = [[left, right]]
+  while (pairs.length) {
+    if (--budget.remaining < 0) return undefined
+    const [a, b] = pairs.pop()!
+    if (a === b) continue
+    if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) !== Array.isArray(b)) return false
+    if (Array.isArray(a) && Array.isArray(b) && a.length !== b.length) return false
+    const aKeys = Object.keys(a), bKeys = Object.keys(b)
+    if (aKeys.length !== bKeys.length) return false
+    if (aKeys.length > budget.remaining) return undefined
+    const aObject = a as RecordValue, bObject = b as RecordValue
+    for (const key of aKeys) {
+      if (!Object.hasOwn(bObject, key)) return false
+      pairs.push([aObject[key], bObject[key]])
+    }
+  }
+  return true
+}
+
+function waitingTool(): string | null {
+  let tool: string | null = null
+  for (const wait of permissionWaits) tool = wait.tool
+  return tool
+}
+
+function finishObservedCall(id: string, call: ObservedCall): void {
+  if (activeCalls.get(id) === call) activeCalls.delete(id)
+  checkedInputs.delete(call)
+  for (const wait of permissionWaits) {
+    if (wait.candidates?.delete(call) && wait.candidates.size === 0) permissionWaits.delete(wait)
+  }
+}
+
+async function markPermission($: EngineInterface, tool: string, input?: unknown): Promise<void> {
+  const epoch = permissionEpoch
+  const eligible = [...activeCalls.values()].filter(call => call.epoch === epoch && !call.agentId &&
+    (tool === 'tool' || call.tool === tool))
+  // Compare only when a real request arrives, sharing a work budget across
+  // all candidates. Large string bodies need no serialized second copy.
+  const budget = { remaining: 8192 }
+  const matching = input === undefined ? [] : eligible.filter(call => !checkedInputs.has(call) ||
+    samePermissionInput(input, checkedInputs.get(call), budget) !== false)
+  const candidates = matching.length ? matching : eligible
+  // PermissionRequest has no call id. Keep all indistinguishable candidates:
+  // choosing one could hide another call's still-open permission prompt.
+  // An unmatched notification stays visible until the turn ends.
+  permissionWaits.add({ tool: tool.slice(0, 48), candidates: candidates.length ? new Set(candidates) : null })
+  await update($, activityView, view => epoch !== permissionEpoch || !permissionWaits.size ? view :
+    ({ ...view, phase: 'permission' as const, waitingTool: waitingTool() }))
 }
 
 async function saveResume($: EngineInterface, resume: ResumeSummary): Promise<void> {
@@ -321,8 +379,7 @@ async function resetProjectActivity($: EngineInterface, root: string): Promise<v
   cwd = root
   turnId = null
   notifiedTurn = null
-  permissions.clear()
-  toolAgents.clear()
+  resetPermissions()
   sessionFiles = []
   sessionTests = []
   await quietly($, async () => {
@@ -363,7 +420,7 @@ export function registerActivity(on: On): void {
 
   on('turn.start', { turnId: /^/ }, async ($, e, next) => {
     turnId = e.turnId
-    permissions.clear()
+    resetPermissions()
     await quietly($, async () => {
       await update($, activityView, view => ({ ...view, phase: 'working' as const, waitingTool: null,
         files: [], tests: [], toolErrors: 0, last: null, message: null }))
@@ -371,34 +428,46 @@ export function registerActivity(on: On): void {
     return await next(e)
   })
 
-  on('tool.check', { tool: /^/ }, async ($, e, next) => {
-    // Keep and return the original continuation. This hook only observes its
-    // verdict to draw Buddy's waiting state; it never constructs a decision.
-    const permissionCheck = next(e)
-    const result = await permissionCheck
-    if (turnId && e.tool_use_id && !toolAgents.get(e.tool_use_id) && result.decision === 'ask') {
-      await quietly($, () => markPermission($, e.tool, e.tool_use_id))
+  on('tool.check', { tool: /^/ }, (_, e, next) => {
+    // Observe only the question, after any earlier input rewrites. The verdict
+    // is neither inspected nor changed; actual requests drive Buddy's state.
+    const call = e.tool_use_id ? activeCalls.get(e.tool_use_id) : undefined
+    if (turnId && call?.epoch === permissionEpoch && !call.agentId) {
+      // Retain the frozen event value only; do no input processing on ordinary
+      // allow/deny checks. It is never persisted or logged.
+      checkedInputs.set(call, e.input)
     }
-    return permissionCheck
+    return next(e)
   })
 
   on('classic.PermissionRequest', { hook_event_name: 'PermissionRequest' }, async ($, e, next) => {
-    if (!e.agent_id && turnId) await quietly($, () => markPermission($, e.tool_name))
-    return await next(e)
+    if (!e.agent_id && turnId) await quietly($, () => markPermission($, e.tool_name, e.tool_input))
+    return next(e)
   })
 
   on('classic.Notification', { notification_type: 'permission_prompt' }, async ($, e, next) => {
-    if (!e.agent_id && turnId && e.notification_type === 'permission_prompt') await quietly($, () => markPermission($, 'tool'))
-    return await next(e)
+    if (!e.agent_id && turnId && e.notification_type === 'permission_prompt') {
+      await quietly($, () => markPermission($, 'tool'))
+    }
+    return next(e)
   })
 
   on('tool.call', { tool: /^/ }, async ($, e, next) => {
     const observedTurn = turnId
-    toolAgents.set(e.tool_use_id, e.agentId)
+    const call: ObservedCall = { tool: e.tool, agentId: e.agentId, epoch: permissionEpoch }
+    activeCalls.set(e.tool_use_id, call)
     // next runs the existing permission flow and tool exactly once.
-    const result = await next(e)
-    toolAgents.delete(e.tool_use_id)
-    if (!observedTurn || observedTurn !== turnId) return result
+    let result
+    try { result = await next(e) } catch (error) {
+      finishObservedCall(e.tool_use_id, call)
+      if (observedTurn && observedTurn === turnId && call.epoch === permissionEpoch && !e.agentId) {
+        await quietly($, () => update($, activityView, view => call.epoch !== permissionEpoch ? view :
+          ({ ...view, phase: 'error' as const, waitingTool: waitingTool() })))
+      }
+      throw error
+    }
+    finishObservedCall(e.tool_use_id, call)
+    if (!observedTurn || observedTurn !== turnId || call.epoch !== permissionEpoch) return result
     await quietly($, async () => {
       const value = record(result.result)
       const failed = Boolean(result.deny || result.isError)
@@ -419,12 +488,11 @@ export function registerActivity(on: On): void {
       }
       const label = e.tool === 'Bash' ? testLabel(e.command) : null
       if (label && !result.deny) await addTests($, testEvidence(label, value, e.tool === 'Bash' ? e.command : undefined))
-      if (!e.agentId) permissions.delete(e.tool_use_id)
-      await update($, activityView, view => ({ ...view,
+      await update($, activityView, view => call.epoch !== permissionEpoch ? view : ({ ...view,
         files: uniqueFiles([...view.files, ...changed], cwd),
         toolErrors: view.toolErrors + Number(failed),
-        phase: (e.agentId ? view.phase : failed ? 'error' : permissions.size ? 'permission' : 'working') as ActivityView['phase'],
-        waitingTool: e.agentId || permissions.size ? view.waitingTool : null,
+        phase: (e.agentId ? view.phase : failed ? 'error' : permissionWaits.size ? 'permission' : 'working') as ActivityView['phase'],
+        waitingTool: e.agentId ? view.waitingTool : waitingTool(),
       }))
     })
     return result
@@ -445,7 +513,7 @@ export function registerActivity(on: On): void {
     const result = await next(e)
     if (e.agentId || e.turnId !== turnId) return result
     turnId = null
-    permissions.clear()
+    resetPermissions()
     const epoch = activityEpoch
     await quietly($, async () => {
       const view = await read($, activityView)

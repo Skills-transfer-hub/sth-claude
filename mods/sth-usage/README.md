@@ -1,6 +1,6 @@
 # Buddy · Claude Code
 
-Version **0.3.4**. The version is also visible at the bottom of the Home panel.
+Version **0.3.5**. The version is also visible at the bottom of the Home panel.
 
 Buddy tracks Claude context and quotas, changed files and checks, then helps you find STH skills that fit your project.
 
@@ -119,7 +119,7 @@ Run these tests from the source checkout on `main`. Tests cover terminal and des
 
 ## Directory review notes
 
-The `tool.check` hook observes the decision returned by `next(e)` to display Buddy's waiting state. It returns the original continuation result, including its decision, reason and metadata; it never grants permission or replaces a user's decision. `classic.PermissionRequest` and permission notifications only update that state. Tool and `process.run` hooks observe completed calls for changed paths, errors and actual test exit codes, then return the original results. They do not alter commands or their output.
+The `tool.check` hook records the current call's input in memory and returns `next(e)` directly. It never reads or changes the permission answer. Actual `classic.PermissionRequest` events and permission notifications drive Buddy's waiting state. Their payloads omit the call id, so the observer matches active calls by tool and input. When calls cannot be distinguished, waiting remains until all matching calls finish; an unmatched request remains until the turn ends. This conservative display avoids clearing a permission prompt because an unrelated call completed. Tool and `process.run` hooks observe completed calls for changed paths, errors and actual test exit codes, then return the original results. They do not alter commands or their output.
 
 The Open diff button runs Claude's built-in `/diff` command when available. Resume and verification actions only fill a draft. Project changes reset project-specific panel state through `classic.CwdChanged`; they do not alter settings, instructions or the new working directory. The pane navigation hook closes the other Buddy panes and sets the STH pane title.
 

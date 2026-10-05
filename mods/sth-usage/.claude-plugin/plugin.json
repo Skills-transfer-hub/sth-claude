@@ -1,7 +1,7 @@
 {
   "name": "sth-usage",
   "displayName": "Buddy by STH",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Buddy: context, session summaries and resume, project diagnostics, STH skills and fika breaks",
   "author": { "name": "Skills Transfer Hub" },
   "homepage": "https://www.skillsth.com/",

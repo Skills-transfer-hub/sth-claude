@@ -4,7 +4,7 @@ Last updated: 2026-10-05. Applies to the Buddy · STH Claude Code mod (`sth-usag
 
 ## Data the mod uses
 
-The mod runs inside Claude Code with your local permissions. It reads session usage, context estimates, active-agent information and tool events to display progress, quotas, changed paths, errors and test results. It reads selected project manifests, directory names and `.sth/project.json` for diagnostics and catalog recommendations. This information can contain personal or confidential data.
+The mod runs inside Claude Code with your local permissions. It reads session usage, context estimates, active-agent information and tool events to display progress, quotas, changed paths, errors and test results. It reads selected project manifests, directory names and `.sth/project.json` for diagnostics and catalog recommendations. This information can contain personal or confidential data. Tool inputs used to match permission requests stay in memory for the active turn; they are not logged, persisted or sent to a server by this observer.
 
 The Resume feature derives a short objective from your first submitted prompt in the session. Fika reads the current draft and session messages to determine whether you have started writing a prompt; it does not save a transcript. Tool arguments and results are inspected to identify changed files and test exit codes, but the saved Resume summary does not contain full tool arguments, command output or a transcript.
 
