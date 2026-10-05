@@ -19,10 +19,10 @@
   },
   "plugin": "sth-usage",
   "pluginFilesSha256": {
-    ".claude-plugin/plugin.json": "2ef30af749356655a8c38c372ebb907f59be101198999e5048a145fcc71fb34f",
+    ".claude-plugin/plugin.json": "44b055e57bd85af9bc2bb582b10ce8a0803e2c4b44c85670e937b2581c053e96",
     "LICENSE": "a68b09b323743a647ef546460e5920858bd04ef1b6e960fb32acfc5e46f1ae57",
-    "PRIVACY.md": "6a8e8831c1136b2bd12577e05b4fcda0c469809d8a3ac15293f54ab0d769fe4c",
-    "README.md": "68e14a5a14b110bd84b59e3f191fe3c6b033e21a97fea2ab1d4451abf20e0092",
+    "PRIVACY.md": "88a20079b32ebc4d9137eaf2f1efd725471f38ba1ee4e5077d0931d4d3eabab3",
+    "README.md": "60cae0adf1eae3b1692370a23ac851cce63a0c32fe8bf0caffbb0b2ce45f23b8",
     "THIRD_PARTY_NOTICES.md": "86e09afee2078bbc23278d6c5be1e8826088f4c348c533024d210c1745ed3db6",
     "assets/bootstrap/done.png": "433c655da5781a770915d025bd5c7a676f6abeb81c8f18373acd180ac6265049",
     "assets/bootstrap/error.png": "a0849bdf54191e5f7f03e508b63eea597da5b463d2dc2489f961882bd9951c4f",
@@ -32,7 +32,7 @@
     "assets/bootstrap/work.png": "58ea57ee078f4049ff7ff5d3f9565e58136c9d51ece812a06225d011f9f1c031",
     "assets/buddy-codec/remote.json": "48258d00f2f2c0b1c04399b6177a169f203330d178291799e1b845fce8db9747",
     "assets/icon.png": "0b846c755c57193f4a9fa9a276ff53cac33963f77c8701cf479c5d7bc6439e5c",
-    "hooks/activity.tsx": "d817b02e6059efb088514814375698a2fe2a38a8b0fa24d9caf976aa953c96b8",
+    "hooks/activity.tsx": "8254bdb6262ffcd56da7df538334dc4c8223636a8d9814fc39ad046b6d438748",
     "hooks/buddy-assets.ts": "e3555ac108838b9e714f4ec9957d7f318f52b9f654760281e6ad48ff450800d3",
     "hooks/buddy-codec.ts": "49c256dffe2276be1673ad7fae03c4fd0a8d198e3bae411837490d81ad48022e",
     "hooks/buddy-images.ts": "f679d174cfb19a2c9329a95c62328b79dca7bcebe74bc140f722dfcbfc779b67",
@@ -48,7 +48,7 @@
     "hooks/vendor/LICENSE.fflate": "0a1df3a083d0c010560aa342e87959c8c1070e6fd54545741f083f22d0c8b551",
     "hooks/vendor/inflate.d.ts": "d8f690c875db8d0a11a23ba24dd4b4575e96dd4a620014b1bd492e5657442e22",
     "hooks/vendor/inflate.js": "4ffe109ba11ddff2fac004d7b14706621124dcbc3d588905a7a39a41d8663d28",
-    "hooks/version.ts": "a28d66095f0c567d4dd1eb790c0398d29e2d68e2db5f03b850cfbe52af474bd7",
+    "hooks/version.ts": "bbbab07fbe00838f98484545b0c439e83d401c03ef619927905809c679695355",
     "tsconfig.json": "e66d4398c50b6b2a44027d00a2ef748a30a10bab9602d35934d11be3eebcdd0c",
     "types/index.d.ts": "0bc0681e5766b4da9ccb83be87f6d2a4b1140b5cf8ef132a151ab055005b5719",
     "ui/buddy.ts": "da2f8a894665d31c15d00b3b4010509650c7cffb5d159d4bfe283c32c8374191",
@@ -106,8 +106,8 @@
     "ui/terminal-frames/work.ts": "1e9332beb157a41889e491c90d87a7ec9be01bc0f04f2b3d00e7be714e15ac63"
   },
   "releaseBranch": "codex/directory-release",
-  "sourceCommit": "9255008c9bf69159100c65ad32ef0ada6af00d03",
-  "sourceCommitTime": "2026-10-05T11:28:03+02:00",
+  "sourceCommit": "54b818d850b666c19ae23471896f9b515db99544",
+  "sourceCommitTime": "2026-10-05T12:00:16+02:00",
   "sourceRepository": "Skills-transfer-hub/sth-claude",
-  "version": "0.3.4"
+  "version": "0.3.5"
 }
