@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "description": "Buddy and STH tools for Claude Code."
+  },
+  "name": "sth",
+  "owner": {
+    "name": "Skills Transfer Hub"
+  },
+  "plugins": [
+    {
+      "description": "Buddy: Claude usage, session summaries, project diagnostics and STH catalogs.",
+      "name": "sth-usage",
+      "source": "./mods/sth-usage"
+    }
+  ]
+}
