@@ -372,11 +372,14 @@ export function registerActivity(on: On): void {
   })
 
   on('tool.check', { tool: /^/ }, async ($, e, next) => {
-    const result = await next(e)
+    // Keep and return the original continuation. This hook only observes its
+    // verdict to draw Buddy's waiting state; it never constructs a decision.
+    const permissionCheck = next(e)
+    const result = await permissionCheck
     if (turnId && e.tool_use_id && !toolAgents.get(e.tool_use_id) && result.decision === 'ask') {
       await quietly($, () => markPermission($, e.tool, e.tool_use_id))
     }
-    return result
+    return permissionCheck
   })
 
   on('classic.PermissionRequest', { hook_event_name: 'PermissionRequest' }, async ($, e, next) => {

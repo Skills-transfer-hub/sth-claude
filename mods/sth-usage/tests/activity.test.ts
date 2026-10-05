@@ -197,6 +197,35 @@ describe('Activity observes the existing chain', () => {
     expect(env.view().phase).toBe('working')
   })
 
+  for (const decision of ['allow', 'ask', 'deny'] as const) {
+    test(`permission observation preserves the complete ${decision} verdict and checks exactly once`, async ($, on) => {
+      const original = { decision, reason: 'The existing policy decides', rule: 'Bash(npm test)', hook: 'PreToolUse' }
+      let checks = 0
+      on('tool.check', { tool: 'Bash' }, () => { checks++; return original })
+      const env = environment(on)
+      await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+      await $.turn.start({ text: 'Check tests', turnId: `permission-${decision}` })
+      const returned = await $.tool.check({ tool: 'Bash', input: { command: 'npm test' }, tool_use_id: `permission-${decision}` })
+      expect(returned).toEqual(original)
+      expect(checks).toBe(1)
+      expect(env.view()).toMatchObject({ phase: decision === 'ask' ? 'permission' : 'working', waitingTool: decision === 'ask' ? 'Bash' : null })
+      expect(original).toEqual({ decision, reason: 'The existing policy decides', rule: 'Bash(npm test)', hook: 'PreToolUse' })
+    })
+  }
+
+  test('a rejected permission check stays rejected and does not invent a waiting state', async ($, on) => {
+    let checks = 0
+    on('tool.check', { tool: 'Bash' }, () => { checks++; throw new Error('Permission policy unavailable') })
+    const env = environment(on)
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Check tests', turnId: 'permission-error' })
+    // The host wraps a failing continuation in HooksError; no verdict may be
+    // synthesized from that failure, regardless of the wrapper's wording.
+    await expect($.tool.check({ tool: 'Bash', input: { command: 'npm test' }, tool_use_id: 'permission-error' })).rejects.toThrow()
+    expect(checks).toBe(1)
+    expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+  })
+
   test('only a long main turn emits one toast', async ($, on) => {
     const env = environment(on)
     await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })

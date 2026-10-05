@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Stage a compact release tree and reproducible archive; never commit or push."""
+"""Stage the production release after testing its full bundle; never push.
+
+The input must retain its regression tests. The workflow validates and runs them
+before this step; only the published tree and its archive omit tests/ fixtures.
+"""
 from __future__ import annotations
 
 import argparse
@@ -81,6 +85,35 @@ def validate_asset_tree(source: Path, bundle: Path, receipt: dict) -> set[Path]:
     return expected
 
 
+def release_files(bundle: Path, asset_paths: set[Path], icon: Path | None) -> list[tuple[Path, Path]]:
+    """Keep the tested runtime unchanged and omit test-only hook registrations."""
+    if not any(path.is_file() for path in (bundle / "tests").rglob("*.test.ts")):
+        raise SystemExit("Input bundle must include its regression tests before release staging")
+    allowed = {".claude-plugin", "hooks", "ui", "types", "tests", "assets", "README.md", "PRIVACY.md", "LICENSE", "tsconfig.json"}
+    files = []
+    for path in sorted(bundle.rglob("*")):
+        relative = path.relative_to(bundle)
+        if path.is_symlink():
+            raise SystemExit(f"Symlinks are not permitted in the generated bundle: {relative}")
+        if not path.is_file():
+            continue
+        if relative.parts[0] not in allowed and relative != icon and not (len(relative.parts) == 1 and relative.name.startswith("THIRD_PARTY")):
+            raise SystemExit(f"Unexpected bundle entry: {relative}")
+        if relative.parts[0] == "assets" and relative not in asset_paths and relative != icon:
+            raise SystemExit(f"Unexpected artwork or animation data in release: {relative}")
+        if any(part in {".git", ".env", "node_modules", "outputs", "previews", "__pycache__"} for part in relative.parts):
+            raise SystemExit(f"Forbidden bundle entry: {relative}")
+        if path.suffix.lower() in {".blend", ".mov", ".mp4", ".webm", ".pyc"}:
+            raise SystemExit(f"Source media must remain on main: {relative}")
+        if relative.parts[:2] == (".claude-plugin", "types"):
+            raise SystemExit("Locally generated Claude SDK declarations must not be published")
+        # Preserve the validated input for CI and local debugging. Test fixtures
+        # register mock hooks/tools and must not be scanned as shipped behavior.
+        if relative.parts[0] != "tests":
+            files.append((path, relative))
+    return files
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", type=Path, required=True)
@@ -111,8 +144,6 @@ def main() -> None:
             raise SystemExit(f"Missing required bundle file: {name}")
     if not any(path.is_file() for path in bundle.glob("THIRD_PARTY*")):
         raise SystemExit("Bundle must include third-party notices for its decoder")
-    if not any((bundle / "tests").rglob("*.test.ts")):
-        raise SystemExit("Bundle must include its regression tests")
     receipt = json.loads((bundle.parent / "receipt.json").read_text())
     if receipt.get("format") != "sth-rgba-delta-v1" or receipt.get("codecIncluded") is not True or receipt.get("pixelVerification") != "passed":
         raise SystemExit("Builder receipt must confirm codec inclusion and exact pixel verification")
@@ -121,25 +152,7 @@ def main() -> None:
     icon = Path(icon_name) if isinstance(icon_name, str) and icon_name and not icon_name.startswith(("https://", "http://")) else None
     if icon is not None and (icon.is_absolute() or ".." in icon.parts or not (bundle / icon).is_file()):
         raise SystemExit("Declared listing icon must be a file inside the bundle")
-    allowed = {".claude-plugin", "hooks", "ui", "types", "tests", "assets", "README.md", "PRIVACY.md", "LICENSE", "tsconfig.json"}
-    files = []
-    for path in sorted(bundle.rglob("*")):
-        relative = path.relative_to(bundle)
-        if path.is_symlink():
-            raise SystemExit(f"Symlinks are not permitted in the generated bundle: {relative}")
-        if not path.is_file():
-            continue
-        if relative.parts[0] not in allowed and relative != icon and not (len(relative.parts) == 1 and relative.name.startswith("THIRD_PARTY")):
-            raise SystemExit(f"Unexpected bundle entry: {relative}")
-        if relative.parts[0] == "assets" and relative not in asset_paths and relative != icon:
-            raise SystemExit(f"Unexpected artwork or animation data in release: {relative}")
-        if any(part in {".git", ".env", "node_modules", "outputs", "previews", "__pycache__"} for part in relative.parts):
-            raise SystemExit(f"Forbidden bundle entry: {relative}")
-        if path.suffix.lower() in {".blend", ".mov", ".mp4", ".webm", ".pyc"}:
-            raise SystemExit(f"Source media must remain on main: {relative}")
-        if relative.parts[:2] == (".claude-plugin", "types"):
-            raise SystemExit("Locally generated Claude SDK declarations must not be published")
-        files.append((path, relative))
+    files = release_files(bundle, asset_paths, icon)
 
     plugin = output / "mods/sth-usage"
     plugin.mkdir(parents=True)

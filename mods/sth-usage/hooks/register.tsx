@@ -360,7 +360,7 @@ function startBuddyAssetPreparation($: EngineInterface): void {
         try {
           return await Promise.race([
             $.http.fetch(url),
-            new Promise<never>((_, reject) => {
+            new Promise<never>((resolveTimeout, reject) => {
               timeout = $.clock.after(30_000, () => { reject(new Error('Buddy asset download timed out')) })
             }),
           ])
@@ -559,11 +559,9 @@ async function buddyElement(
   if (e.surface === 'desktop') {
     const { Client } = $.ui.resolve(e)
     if (fikaFrame !== null) {
-      return <Client key={`buddy-fika-scene-${fikaStartedAt}`} module="../ui/fika.ts" props={{ startFrame: fikaFrame, caption }} />
+      return Client({ module: '../ui/fika.ts', key: `buddy-fika-scene-${fikaStartedAt}`, props: { startFrame: fikaFrame, caption } })
     }
-    return (
-      <Client key={`buddy-${state}`} module="../ui/buddy.ts" props={{ state, caption }} />
-    )
+    return Client({ module: '../ui/buddy.ts', key: `buddy-${state}`, props: { state, caption } })
   }
   const { Text } = $.ui.resolve(e)
   return <Text>{caption}</Text>

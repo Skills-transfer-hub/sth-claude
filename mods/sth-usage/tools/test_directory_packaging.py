@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import zipfile
 
 import build_directory_bundle as build
 import stage_directory_release as stage
@@ -104,6 +105,66 @@ class HostedPackagingTests(unittest.TestCase):
         (self.data / "fika/0000.json").write_text("changed")
         with self.assertRaisesRegex(SystemExit, "packet differs"):
             stage.validate_asset_tree(self.repo, self.bundle, receipt)
+
+
+class ReleaseBoundaryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="sth-release-boundary-test-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.source = self.root / "source"
+        self.bundle = self.root / "bundle"
+        self.contents = {
+            ".claude-plugin/plugin.json": b'{"name":"sth-usage","version":"0.3.3"}',
+            "README.md": b"Buddy runtime documentation\n",
+            "PRIVACY.md": b"Data handling\n",
+            "LICENSE": b"MIT\n",
+            "THIRD_PARTY_NOTICES.md": b"Decoder notice\n",
+            "hooks/hooks.json": b'{"modules":["./register.tsx"]}',
+            "hooks/register.tsx": b"export default function register(on) { on('session.start', () => {}) }\n",
+            "hooks/buddy-codec.ts": b"export const pixelDecoder = true\n",
+            "hooks/vendor/inflate.js": b"export const inflate = true\n",
+            "ui/buddy.ts": b"export default ['original pixels']\n",
+            "types/index.d.ts": b"export type Buddy = string\n",
+            "tests/activity.test.ts": b"on('classic.PreToolUse', () => fakeResult)\n",
+            "tests/fixtures/mock-tool.ts": b"export const mockToolCall = 'test-only-call'\n",
+        }
+        for name, contents in self.contents.items():
+            path = self.source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(contents)
+        self.tracked = [Path(name) for name in self.contents]
+
+    def test_ci_bundle_retains_tests_but_published_files_and_archive_are_production_only(self) -> None:
+        build.copy_runtime(self.source, self.bundle, self.tracked, include_tests=True)
+        production = stage.release_files(self.bundle, set(), None)
+        expected = {Path(name) for name in self.contents if not name.startswith("tests/")}
+        self.assertEqual({relative for _, relative in production}, expected)
+        archive = self.root / "release.zip"
+        with zipfile.ZipFile(archive, "w") as output:
+            for path, relative in production:
+                output.write(path, relative.as_posix())
+        with zipfile.ZipFile(archive) as output:
+            self.assertEqual(set(output.namelist()), {path.as_posix() for path in expected})
+            self.assertFalse(any(b"classic.PreToolUse" in output.read(name) for name in output.namelist()))
+            for name in output.namelist():
+                self.assertEqual(output.read(name), self.contents[name])
+        # Filtering must not delete source tests or the bundle CI actually ran.
+        for name, contents in self.contents.items():
+            self.assertEqual((self.source / name).read_bytes(), contents)
+            self.assertEqual((self.bundle / name).read_bytes(), contents)
+
+    def test_staging_rejects_a_bundle_built_without_regression_tests(self) -> None:
+        build.copy_runtime(self.source, self.bundle, self.tracked, include_tests=False)
+        self.assertFalse((self.bundle / "tests").exists())
+        with self.assertRaisesRegex(SystemExit, "must include its regression tests"):
+            stage.release_files(self.bundle, set(), None)
+
+    def test_excluded_test_directory_still_receives_bundle_safety_checks(self) -> None:
+        build.copy_runtime(self.source, self.bundle, self.tracked, include_tests=True)
+        (self.bundle / "tests/fixtures/unexpected-link").symlink_to(self.source / "README.md")
+        with self.assertRaisesRegex(SystemExit, "Symlinks are not permitted"):
+            stage.release_files(self.bundle, set(), None)
 
 
 if __name__ == "__main__":

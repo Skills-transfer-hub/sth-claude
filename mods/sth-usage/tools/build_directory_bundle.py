@@ -18,6 +18,8 @@ OUTPUT must not exist and must be outside the repository. It receives sth-usage/
 receipt.json, and reproducible ZIP/tar.gz archives. Size checks cover individual
 files, the plugin, and both archives. Packaging does not validate runtime behavior:
 run Claude's plugin validate/test commands against OUTPUT/sth-usage before release.
+Use --include-tests for CI and local checks. The release staging tool retains
+that tested input and excludes test-only hooks from the published production tree.
 """
 from __future__ import annotations
 

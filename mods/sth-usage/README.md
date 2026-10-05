@@ -1,6 +1,6 @@
 # Buddy · Claude Code
 
-Version **0.3.2**. The version is also visible at the bottom of the Home panel.
+Version **0.3.3**. The version is also visible at the bottom of the Home panel.
 
 Buddy tracks Claude context and quotas, changed files and checks, then helps you find STH skills that fit your project.
 
@@ -115,7 +115,17 @@ claude plugin validate .
 claude plugin test .
 ```
 
-Tests cover terminal and desktop rendering, buttons and drafts, missing data, permissions, summaries and resume, plus the existing Buddy and Fika animations.
+Run these tests from the source checkout on `main`. Tests cover terminal and desktop rendering, buttons and drafts, missing data, permissions, summaries and resume, plus the existing Buddy and Fika animations. CI tests the generated compact bundle before staging a runtime-only distribution; test fixtures and simulated tool calls are not shipped to users.
+
+## Directory review notes
+
+The `tool.check` hook observes the decision returned by `next(e)` to display Buddy's waiting state. It returns the original continuation result, including its decision, reason and metadata; it never grants permission or replaces a user's decision. `classic.PermissionRequest` and permission notifications only update that state. Tool and `process.run` hooks observe completed calls for changed paths, errors and actual test exit codes, then return the original results. They do not alter commands or their output.
+
+The Open diff button runs Claude's built-in `/diff` command when available. Resume and verification actions only fill a draft. Project changes reset project-specific panel state through `classic.CwdChanged`; they do not alter settings, instructions or the new working directory. The pane navigation hook closes the other Buddy panes and sets the STH pane title.
+
+Network downloads are restricted to the immutable public animation URLs described above. Downloaded bytes are verified pixel data and never become command arguments or executable code. The cache writer only writes animation JSON and its readiness pointer in the dedicated cache directory. The readable `hooks/vendor/inflate.js` implements the lossless decompressor; its optional `Error.captureStackTrace` call only annotates decoding errors. It is not a script loader. Long encoded strings in `ui/frames` and `ui/terminal-frames` are the unchanged bundled desktop WebP images and terminal raster data, not executable downloads. Their original artwork and build tools remain in the public source checkout on `main` for review.
+
+Local programs run independently of these downloads: the installed STH CLI handles status, catalog refresh, project setup, installation, removal and updates; diagnostics run binary version checks and `sth doctor`; an explicitly requested test action runs the recognized project test command. These processes retain the user's local CLI permissions and may contact the services configured in STH. The privacy notice describes the session and project data read locally and the separate GitHub image requests.
 
 ## Publish a compact distribution
 
