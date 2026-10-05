@@ -354,6 +354,39 @@ describe('Activity observes the existing chain', () => {
     expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
   })
 
+  test('passive input storage leaves deeply frozen event inputs unchanged through request and completion', async ($, on) => {
+    const checkedInputs: unknown[] = []
+    on('tool.check', { tool: 'Bash' }, (_, e, next) => {
+      checkedInputs.push(e.input)
+      return next(e)
+    })
+    const env = environment(on)
+    const calls = controlledCalls($, on)
+    const input = Object.freeze({ command: 'immutable command', details: Object.freeze({
+      mode: 'read', values: Object.freeze([1, Object.freeze({ label: 'original' })]),
+    }) })
+    const original = JSON.stringify(input)
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Observe immutable input', turnId: 'immutable-input' })
+    const pending = await calls.start('immutable', input.command, { input })
+    expect(checkedInputs).toEqual([input])
+    expect(JSON.stringify(input)).toBe(original)
+    expect(Object.isFrozen(input)).toBe(true)
+    expect(Object.isFrozen(input.details.values)).toBe(true)
+    expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+    await calls.request(input.command, { input: {
+      details: { values: [1, { label: 'original' }], mode: 'read' }, command: input.command,
+    } })
+    expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'Bash' })
+    pending.finish()
+    await pending.result
+    expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
+    expect(JSON.stringify(input)).toBe(original)
+    expect(JSON.stringify(checkedInputs[0])).toBe(original)
+    expect(calls.executions()).toBe(1)
+    expect(env.logs.some(log => log.includes('summary unavailable'))).toBe(false)
+  })
+
   test('subagent checks, requests, notifications and completions do not change main waiting state', async ($, on) => {
     const env = environment(on)
     const calls = controlledCalls($, on)

@@ -202,10 +202,11 @@ let cwd = ''
 let activityEpoch = 0
 let turnId: string | null = null
 let notifiedTurn: string | null = null
-type ObservedCall = { tool: string; agentId?: string; epoch: number; input?: unknown; hasInput: boolean }
+type ObservedCall = { tool: string; agentId?: string; epoch: number }
 type PermissionWait = { tool: string; candidates: Set<ObservedCall> | null }
 let permissionEpoch = 0
 const activeCalls = new Map<string, ObservedCall>()
+const checkedInputs = new Map<ObservedCall, unknown>()
 const permissionWaits = new Set<PermissionWait>()
 let sessionFiles: string[] = []
 let sessionTests: TestEvidence[] = []
@@ -219,6 +220,7 @@ async function addTests($: EngineInterface, evidence: TestEvidence): Promise<voi
 function resetPermissions(): void {
   permissionEpoch++
   activeCalls.clear()
+  checkedInputs.clear()
   permissionWaits.clear()
 }
 
@@ -250,6 +252,7 @@ function waitingTool(): string | null {
 
 function finishObservedCall(id: string, call: ObservedCall): void {
   if (activeCalls.get(id) === call) activeCalls.delete(id)
+  checkedInputs.delete(call)
   for (const wait of permissionWaits) {
     if (wait.candidates?.delete(call) && wait.candidates.size === 0) permissionWaits.delete(wait)
   }
@@ -262,8 +265,8 @@ async function markPermission($: EngineInterface, tool: string, input?: unknown)
   // Compare only when a real request arrives, sharing a work budget across
   // all candidates. Large string bodies need no serialized second copy.
   const budget = { remaining: 8192 }
-  const matching = input === undefined ? [] : eligible.filter(call => !call.hasInput ||
-    samePermissionInput(input, call.input, budget) !== false)
+  const matching = input === undefined ? [] : eligible.filter(call => !checkedInputs.has(call) ||
+    samePermissionInput(input, checkedInputs.get(call), budget) !== false)
   const candidates = matching.length ? matching : eligible
   // PermissionRequest has no call id. Keep all indistinguishable candidates:
   // choosing one could hide another call's still-open permission prompt.
@@ -432,8 +435,7 @@ export function registerActivity(on: On): void {
     if (turnId && call?.epoch === permissionEpoch && !call.agentId) {
       // Retain the frozen event value only; do no input processing on ordinary
       // allow/deny checks. It is never persisted or logged.
-      call.input = e.input
-      call.hasInput = true
+      checkedInputs.set(call, e.input)
     }
     return next(e)
   })
@@ -452,7 +454,7 @@ export function registerActivity(on: On): void {
 
   on('tool.call', { tool: /^/ }, async ($, e, next) => {
     const observedTurn = turnId
-    const call: ObservedCall = { tool: e.tool, agentId: e.agentId, epoch: permissionEpoch, hasInput: false }
+    const call: ObservedCall = { tool: e.tool, agentId: e.agentId, epoch: permissionEpoch }
     activeCalls.set(e.tool_use_id, call)
     // next runs the existing permission flow and tool exactly once.
     let result
