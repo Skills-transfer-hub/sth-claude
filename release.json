@@ -32,7 +32,7 @@
     "assets/bootstrap/work.png": "58ea57ee078f4049ff7ff5d3f9565e58136c9d51ece812a06225d011f9f1c031",
     "assets/buddy-codec/remote.json": "48258d00f2f2c0b1c04399b6177a169f203330d178291799e1b845fce8db9747",
     "assets/icon.png": "0b846c755c57193f4a9fa9a276ff53cac33963f77c8701cf479c5d7bc6439e5c",
-    "hooks/activity.tsx": "ed6da9903682a4c4dc807ea57be6d4501c9d50ae74bafa7c4b03cf8001c2a775",
+    "hooks/activity.tsx": "8254bdb6262ffcd56da7df538334dc4c8223636a8d9814fc39ad046b6d438748",
     "hooks/buddy-assets.ts": "e3555ac108838b9e714f4ec9957d7f318f52b9f654760281e6ad48ff450800d3",
     "hooks/buddy-codec.ts": "49c256dffe2276be1673ad7fae03c4fd0a8d198e3bae411837490d81ad48022e",
     "hooks/buddy-images.ts": "f679d174cfb19a2c9329a95c62328b79dca7bcebe74bc140f722dfcbfc779b67",
@@ -106,8 +106,8 @@
     "ui/terminal-frames/work.ts": "1e9332beb157a41889e491c90d87a7ec9be01bc0f04f2b3d00e7be714e15ac63"
   },
   "releaseBranch": "codex/directory-release",
-  "sourceCommit": "5446b4ec936c0aa3e1e549b7f4867ab43c8c0e52",
-  "sourceCommitTime": "2026-10-05T11:46:24+02:00",
+  "sourceCommit": "812d932c88e45363a7055193b04d707825842a55",
+  "sourceCommitTime": "2026-10-05T11:54:47+02:00",
   "sourceRepository": "Skills-transfer-hub/sth-claude",
   "version": "0.3.5"
 }

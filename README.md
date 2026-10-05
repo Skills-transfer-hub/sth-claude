@@ -13,4 +13,4 @@ Restart Claude Code or run `/reload-plugins`, then `/sth-usage`. To receive futu
 
 See [usage](mods/sth-usage/README.md), [privacy](mods/sth-usage/PRIVACY.md), [licensing](mods/sth-usage/LICENSE) and the bundled third-party notices.
 
-Built from [5446b4e](https://github.com/Skills-transfer-hub/sth-claude/commit/5446b4ec936c0aa3e1e549b7f4867ab43c8c0e52); `release.json` records the source and file hashes.
+Built from [812d932](https://github.com/Skills-transfer-hub/sth-claude/commit/812d932c88e45363a7055193b04d707825842a55); `release.json` records the source and file hashes.
