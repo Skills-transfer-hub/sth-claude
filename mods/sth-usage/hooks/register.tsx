@@ -8,6 +8,7 @@ import { EMPTY_PROJECT, rankSkills, registerProject } from './project'
 import { panelChrome, paneNavigation } from './presentation'
 import { PLUGIN_VERSION } from './version'
 import { createBuddyImageReader } from './buddy-images'
+import { prepareBuddyAssets } from './buddy-assets'
 import terminalOk from '../ui/terminal-frames/ok'
 import terminalWork from '../ui/terminal-frames/work'
 import terminalDone from '../ui/terminal-frames/done'
@@ -135,6 +136,7 @@ let fikaAnimation: Timer | undefined
 
 async function recordPrompt($: EngineInterface, text: string): Promise<void> {
   if (!isPromptText(text) || (await read($, fikaEligibility)).hasPrompt) return
+  queuedFika = false
   await update($, fikaEligibility, previous => ({ ...previous, hasPrompt: true, ready: false, playingUntil: null }))
   monitor?.cancel()
   fikaEnd?.cancel()
@@ -153,9 +155,17 @@ function armFikaPlayback($: EngineInterface, remainingMs: number): void {
   })
 }
 
-async function playFika($: EngineInterface): Promise<void> {
+async function playFika($: EngineInterface, terminal = true): Promise<void> {
   const eligibility = await read($, fikaEligibility)
   if (!eligibility.ready || eligibility.hasPrompt) return
+  // A first HD installation must finish before its nine-second clock starts.
+  // Desktop and terminals without an image protocol use their bundled frames.
+  if (terminal && [...terminalBuddies.values()].some(entry => entry.image && entry.preparing)) {
+    queuedFika = true
+    startBuddyAssetPreparation($)
+    $.ui.toast('Preparing Buddy HD. Fika will start when the download is ready.')
+    return
+  }
   const now = await $.clock.now()
   await update($, fikaEligibility, previous => ({
     ...previous, playingUntil: previous.hasPrompt ? null : now + FIKA_DURATION_MS,
@@ -289,6 +299,8 @@ type TerminalBuddy = {
   lastFrame: number;
   images: ReturnType<typeof createBuddyImageReader>;
   blitting?: boolean;
+  preparing?: boolean;
+  probed?: boolean;
 }
 const terminalBuddies = new Map<string, TerminalBuddy>()
 const imageFallbacks = new Set<string>()
@@ -299,6 +311,86 @@ const terminalFrames = {
   error: terminalError, update: terminalUpdate, noConfig: terminalNoConfig,
 }
 let buddyTick = 0
+let queuedFika = false
+let imageProtocolConfirmed = false
+let assetConfig: Promise<void> | undefined
+let assetConfigFailed = false
+let assetManifest: unknown
+let assetIndexText = ''
+let assetRoot: string | undefined
+let assetPhase: 'local' | 'idle' | 'preparing' | 'ready' | 'error' = 'local'
+let assetPercent = 0
+let assetTask: Promise<void> | undefined
+
+async function inspectBuddyAssets($: EngineInterface): Promise<void> {
+  if (!assetConfig) assetConfig = (async () => {
+    assetConfigFailed = false
+    const path = `${$.plugin.root}/assets/buddy-codec/remote.json`
+    if (!await $.fs.exists(path)) return
+    assetPhase = 'idle'
+    assetIndexText = await $.fs.read(path)
+    assetManifest = JSON.parse(assetIndexText)
+  })().catch(() => { assetConfigFailed = true; assetPhase = 'error' })
+  await assetConfig
+}
+
+function startBuddyAssetPreparation($: EngineInterface): void {
+  if (assetTask || assetPhase === 'local' || assetPhase === 'ready' || !imageProtocolConfirmed) return
+  assetPhase = 'preparing'
+  assetPercent = 0
+  assetTask = (async () => {
+    if (assetConfigFailed) {
+      assetConfig = undefined
+      await inspectBuddyAssets($)
+      assetPhase = 'preparing'
+    }
+    if (!assetManifest || typeof assetManifest !== 'object' || !('remote' in assetManifest) || assetConfigFailed) throw new Error('Invalid bundled Buddy asset index')
+    // Assets are shared across projects and plugin updates, outside the plugin
+    // install directory. No project contents or credentials enter this request.
+    const local = await $.env.get('LOCALAPPDATA')
+    const home = local || await $.env.get('HOME') || await $.env.get('USERPROFILE')
+    if (!home || !/^(?:[A-Za-z]:[\\/]|\/)/.test(home) || home.startsWith('//') || home.startsWith('\\\\')) throw new Error('No local asset cache directory')
+    const cache = `${home.replace(/[\\/]$/, '')}/${local ? 'STH/Buddy' : '.cache/sth-buddy'}`
+    assetRoot = await prepareBuddyAssets(assetManifest, assetIndexText, cache, {
+      root: $.plugin.root,
+      read: path => $.fs.read(path),
+      write: (path, text) => $.fs.write(path, text),
+      fetchText: async url => {
+        let timeout: Timer | undefined
+        try {
+          return await Promise.race([
+            $.http.fetch(url),
+            new Promise<never>((_, reject) => {
+              timeout = $.clock.after(30_000, () => { reject(new Error('Buddy asset download timed out')) })
+            }),
+          ])
+        } finally { timeout?.cancel() }
+      },
+    }, progress => {
+      const percent = Math.floor(progress.completed * 100 / Math.max(1, progress.total))
+      if (Math.floor(percent / 5) !== Math.floor(assetPercent / 5)) {
+        assetPercent = percent
+        $.ui.invalidate('ui.render')
+      }
+    })
+    assetPhase = 'ready'
+    assetPercent = 100
+    for (const entry of terminalBuddies.values()) entry.images = createBuddyImageReader()
+    $.ui.invalidate('ui.render')
+    if (queuedFika) {
+      queuedFika = false
+      // Clear the preparation flag before starting the clock; the next render
+      // recreates each entry against the fully verified local cache.
+      for (const entry of terminalBuddies.values()) entry.preparing = false
+      await playFika($)
+    }
+  })().catch(error => {
+    assetPhase = 'error'
+    queuedFika = false
+    $.ui.log(`Buddy HD preparation failed: ${String(error)}`, { to: 'debug' })
+    $.ui.invalidate('ui.render')
+  }).finally(() => { assetTask = undefined })
+}
 
 function buddyCells(state: BuddyState, tick: number): string {
   const frames = terminalFrames[state]
@@ -342,11 +434,27 @@ function terminalBlitResult($: EngineInterface, requestId: string, entry: Termin
 
 // SDK calls stay in this hook module for Claude's static capability audit.
 function readBuddyImage($: EngineInterface, images: ReturnType<typeof createBuddyImageReader>, sequence: BuddyState | 'fika', frame: number) {
-  return images.read($.plugin.root, path => $.fs.exists(path), path => $.fs.read(path), sequence, frame)
+  return images.read(assetRoot ?? $.plugin.root, path => $.fs.exists(path), path => $.fs.read(path), sequence, frame)
 }
 
 function blitBuddy($: EngineInterface, requestId: string, entry: TerminalBuddy, frame: number): void {
   if (terminalBuddies.get(requestId) !== entry || entry.blitting) return
+  if (entry.preparing) {
+    if (entry.probed) return
+    entry.probed = true
+    void $.ui.blit({ requestId, key: entry.key, source: { format: 'png', file: `${$.plugin.root}/assets/bootstrap/${entry.state}.png` }, columns: entry.columns, rows: entry.rows })
+      .then(result => {
+        if (terminalBuddies.get(requestId) !== entry) return
+        if (result.deny) {
+          entry.probed = false
+          terminalBlitResult($, requestId, entry, result.deny)
+        } else {
+          imageProtocolConfirmed = true
+          if (assetPhase === 'idle') startBuddyAssetPreparation($)
+        }
+      }).catch(() => { entry.probed = false })
+    return
+  }
   const fika = entry.fikaStartedAt !== null
   entry.lastFrame = fika && !entry.image ? Math.floor(frame * FIKA_RASTER_FPS / FIKA_HD_FPS) : frame
   if (entry.image) {
@@ -357,7 +465,17 @@ function blitBuddy($: EngineInterface, requestId: string, entry: TerminalBuddy, 
         const result = await $.ui.blit({ requestId, key: entry.key, source, columns: entry.columns, rows: entry.rows })
         terminalBlitResult($, requestId, entry, result.deny)
       })
-      .catch(() => terminalBlitResult($, requestId, entry, 'Buddy image could not be loaded'))
+      .catch(() => {
+        if (terminalBuddies.get(requestId) !== entry) return
+        if (assetPhase === 'local') terminalBlitResult($, requestId, entry, 'Buddy image could not be loaded')
+        else {
+          // A damaged/missing cache is repairable. It must never permanently
+          // change a capable terminal to the lower-resolution fallback.
+          assetRoot = undefined
+          assetPhase = 'error'
+          $.ui.invalidate('ui.render')
+        }
+      })
       .finally(() => { entry.blitting = false })
   } else {
     const cells = fika ? terminalFika[Math.min(terminalFika.length - 1, Math.floor(frame * FIKA_RASTER_FPS / FIKA_HD_FPS))]! : buddyCells(entry.state, frame)
@@ -398,12 +516,27 @@ async function buddyElement(
     const entry: TerminalBuddy = { state, fikaStartedAt, image, key, ...size, lastFrame, images }
     terminalBuddies.set(requestId, entry)
     if (image) {
+      await inspectBuddyAssets($)
+      if (assetPhase !== 'local' && assetPhase !== 'ready') {
+        entry.preparing = true
+        $.clock.after(0, () => blitBuddy($, requestId, entry, 0))
+        return <Box key="buddy-preparation" flexDirection="column" alignItems="center">
+          <Image key={key} source={{ format: 'png', file: `${$.plugin.root}/assets/bootstrap/${state}.png` }} columns={size.columns} rows={size.rows} alt={caption} />
+          <Text dimColor>{assetPhase === 'error' ? 'Buddy HD could not be prepared.' : `Preparing Buddy HD… ${assetPercent}%`}</Text>
+          {assetPhase === 'error' && <Button key="buddy-assets-retry" label="Retry download" onPress={() => startBuddyAssetPreparation($)} />}
+        </Box>
+      }
       let source
       try { source = await readBuddyImage($, images, fikaFrame !== null ? 'fika' : state, fikaFrame ?? buddyTick) }
       catch {
         if (terminalBuddies.get(requestId) !== entry) {
           $.ui.invalidate('ui.render')
           return null
+        }
+        if (assetPhase !== 'local') {
+          assetRoot = undefined
+          assetPhase = 'error'
+          return buddyElement($, e, requestId, state, caption, fikaStartedAt, thought)
         }
         imageFallbacks.add(requestId)
         return buddyElement($, e, requestId, state, caption, fikaStartedAt, thought)
@@ -498,14 +631,14 @@ function fikaThought($: EngineInterface, e: RenderInput<'Pane'>, visible: boolea
   if (!visible || (e.surface !== 'terminal' && e.surface !== 'desktop')) return null
   const { Box, Text, Button } = $.ui.resolve(e)
   if (compactBuddyHeader(e)) return <Box key="buddy-fika" alignItems="center">
-    {playing ? <Text wrap="truncate-end">Fika in Stockholm</Text> : <Button key="fika" label="Fika?" plain onPress={() => playFika($)} />}
+    {playing ? <Text wrap="truncate-end">Fika in Stockholm</Text> : <Button key="fika" label="Fika?" plain onPress={() => playFika($, e.surface === 'terminal')} />}
   </Box>
   return (
     <Box key="buddy-fika" flexDirection="column" alignItems="center">
       <Box borderStyle="round" borderDimColor paddingX={1}>
         {playing
           ? <Text>Fika in Stockholm</Text>
-          : <Button key="fika" label="Fika?" plain onPress={() => playFika($)} />}
+          : <Button key="fika" label="Fika?" plain onPress={() => playFika($, e.surface === 'terminal')} />}
       </Box>
       <Text dimColor>•</Text>
       <Text dimColor>·</Text>

@@ -666,7 +666,8 @@ for (const surface of SURFACES) {
       await buddy.unmount()
     })
 
-    test('thought appears only in Buddy and plays one nine-second animation from the start on each click', async ($, on) => {
+    // Several minutes of virtual time still render thousands of frames on CI.
+    test('thought appears only in Buddy and plays one nine-second animation from the start on each click', { timeoutMs: 15_000 }, async ($, on) => {
       const { clock, blits } = fikaEnvironment(on)
       await $.session.start({ cwd: '/project', surface, isInteractive: true })
       const mount = (requestId: string) => $.ui.mount({
@@ -768,7 +769,7 @@ for (const surface of SURFACES) {
       await buddy.unmount()
     })
 
-    test('typing removes the thought permanently through erasing and reloading', async ($, on) => {
+    test('typing removes the thought permanently through erasing and reloading', { timeoutMs: 15_000 }, async ($, on) => {
       const { clock, values } = fikaEnvironment(on)
       await $.session.start({ cwd: '/project', surface, isInteractive: true })
       await clock.advance(120_000)
@@ -1036,6 +1037,173 @@ describe('Buddy packed-bundle terminal integration', () => {
     expect(blits.some(blit => 'source' in blit)).toBe(false)
     await clock.advance(100)
     expect(blits[blits.length - 1]).toHaveProperty('cells')
+    await buddy.unmount()
+  })
+})
+
+const HOSTED_URL = `https://raw.githubusercontent.com/Skills-transfer-hub/sth-claude/${'a'.repeat(40)}/mods/sth-usage/assets/buddy-codec/`
+function hostedCanonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(hostedCanonical).join(',')}]`
+  if (value && typeof value === 'object') {
+    const object = value as Record<string, unknown>
+    return `{${Object.keys(object).sort().map(key => `${JSON.stringify(key)}:${hostedCanonical(object[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+async function hostedHash(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
+}
+async function hostedBundle(on: On) {
+  const packets = new Map<string, string>(), files = new Map<string, string>(), requests: string[] = []
+  const sequences: Record<string, unknown> = {}
+  const zero720 = `eNrtwTEBAAAAwqD1T20Hb6${'A'.repeat(2679)}HgMpdEAAQ==`
+  for (const [sequence, frameCount] of Object.entries({ ok: 80, work: 48, done: 38, error: 30, update: 36, noConfig: 72, fika: 270 })) {
+    const width = sequence === 'fika' ? 720 : 384, chunks = []
+    for (let firstFrame = 0; firstFrame < frameCount; firstFrame += 6) {
+      const path = `${sequence}/${String(firstFrame).padStart(4, '0')}.json`, count = Math.min(6, frameCount - firstFrame)
+      const text = JSON.stringify({ format: 'sth-rgba-delta-v1', sequence, width, height: width, firstFrame, keyframeInterval: 30,
+        frames: Array.from({ length: count }, (_, offset) => {
+          const frame = firstFrame + offset, key = frame % 30 === 0
+          return { frame, kind: key ? 'key' : 'delta', data: sequence === 'fika' ? zero720 : key ? PACKED_NO_CONFIG_KEY : PACKED_NO_CONFIG_DELTA, sha256: PACKED_NO_CONFIG_HASHES[frame % 6] }
+        }) })
+      packets.set(HOSTED_URL + path, text)
+      chunks.push({ path, firstFrame, frameCount: count, bytes: text.length, sha256: await hostedHash(text) })
+    }
+    sequences[sequence] = { width, height: width, frameCount, chunkSize: 6, keyframeInterval: 30, rgbaSha256: 'b'.repeat(64), decodedRgbaSha256: 'b'.repeat(64), chunks }
+  }
+  const index = { format: 'sth-rgba-delta-v1', codec: 'zlib-rgba-subtract', keyframeInterval: 30, sequences }
+  const manifest = { ...index, remote: { baseUrl: HOSTED_URL, id: await hostedHash(hostedCanonical(index) + '\n') } }
+  let unavailable = false, delay = 0, clock: MockClock | undefined
+  on('fs.exists', { path: /\/assets\/buddy-codec\/remote\.json$/ }, () => ({ value: true }))
+  on('fs.read', { path: /\/assets\/buddy-codec\/remote\.json$/ }, () => ({ value: hostedCanonical(manifest) + '\n' }))
+  on('fs.exists', { path: /^\/buddy-user\// }, (_, e) => ({ value: files.has(e.path) }))
+  on('fs.read', { path: /^\/buddy-user\// }, (_, e) => {
+    const text = files.get(e.path)
+    if (text === undefined) throw new Error('ENOENT')
+    return { value: text }
+  })
+  on('fs.write', { path: /^\/buddy-user\// }, (_, e) => { files.set(e.path, e.text); return { value: undefined } })
+  on('http.fetch', async (_, e) => {
+    requests.push(e.url)
+    if (delay && clock) await clock.sleep(delay)
+    if (unavailable) throw new Error('Asset host unavailable')
+    const text = packets.get(e.url)
+    return { value: { ok: text !== undefined, status: text ? 200 : 404, headers: {}, text: text ?? 'Not found' } }
+  })
+  return { requests, files, setUnavailable: (value: boolean) => { unavailable = value }, setDelay: (value: number, valueClock: MockClock) => { delay = value; clock = valueClock } }
+}
+
+describe('Hosted Buddy assets in the real pane', () => {
+  for (const surface of ['terminal', 'desktop'] as const) {
+    test(`${surface} uses its bundled animation without downloading unsupported HD assets`, async ($, on) => {
+      const assets = await hostedBundle(on)
+      const { clock } = fikaEnvironment(on, [], '', { HOME: '/buddy-user' })
+      await $.session.start({ cwd: '/project', surface, isInteractive: true })
+      const buddy = await $.ui.mount({ plugin: 'sth-usage', surface, component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+      await clock.advance(200)
+      await expectBuddyVisible(buddy)
+      expect(assets.requests).toHaveLength(0)
+      expect(assets.files.size).toBe(0)
+      await buddy.unmount()
+    })
+  }
+
+  test('a failed first download retains the full-quality bootstrap and retry restores cached 20 fps playback', async ($, on) => {
+    const assets = await hostedBundle(on)
+    assets.setUnavailable(true)
+    const { clock, blits } = fikaEnvironment(on, [], '', { HOME: '/buddy-user', MOCK_IMAGE_SUPPORT: '1' })
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    const buddy = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+    await clock.settle()
+    expect((await buddy.find({ type: 'Image' }))?.props.source).toHaveProperty('file', expect.stringContaining('/assets/bootstrap/noConfig.png'))
+    expect(await buddy.find({ type: 'Raster' })).toBeUndefined()
+    expect(await buddy.find({ key: 'buddy-assets-retry' })).toBeDefined()
+    assets.setUnavailable(false)
+    await buddy.press({ key: 'buddy-assets-retry' })
+    await clock.settle()
+    await expectPackedNoConfig((await buddy.find({ type: 'Image' }))?.props.source, 0)
+    expect(await buddy.find({ key: 'buddy-assets-retry' })).toBeUndefined()
+    expect(await buddy.find({ type: 'Raster' })).toBeUndefined()
+    const requests = assets.requests.length
+    assets.setUnavailable(true)
+    blits.length = 0
+    for (let frame = 1; frame < 6; frame++) {
+      await clock.advance(50)
+      const last = blits[blits.length - 1]
+      if (!last || !('source' in last)) throw new Error('Cached Buddy must retain native image playback')
+      await expectPackedNoConfig(last.source, frame)
+    }
+    expect(blits).toHaveLength(5)
+    expect(assets.requests).toHaveLength(requests)
+    await buddy.unmount()
+  })
+
+  test('Fika keeps its entire nine seconds when HD preparation finishes after the click', async ($, on) => {
+    const assets = await hostedBundle(on)
+    const { clock, values } = fikaEnvironment(on, [], '', { HOME: '/buddy-user', MOCK_IMAGE_SUPPORT: '1', STH_FIKA_PREVIEW: '1' })
+    assets.setDelay(10_000, clock)
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    await clock.advance(2_000)
+    const buddy = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+    await clock.settle()
+    expect(await buddy.find({ key: 'buddy-preparation' })).toBeDefined()
+    expect(await buddy.find({ type: 'Raster' })).toBeUndefined()
+    await buddy.press({ key: 'fika' })
+    expect(values.get('fika')).toMatchObject({ playingUntil: null })
+    await clock.advance(9_999)
+    expect(values.get('fika')).toMatchObject({ playingUntil: null })
+    expect(await buddy.find({ type: 'Raster' })).toBeUndefined()
+    assets.setDelay(0, clock)
+    await clock.advance(1)
+    await clock.settle()
+    expect(values.get('fika')).toMatchObject({ playingUntil: clock.now() + 9_000 })
+    expect(await buddy.find({ type: 'Text', text: 'Fika in Stockholm' })).toBeDefined()
+    expect((await buddy.find({ type: 'Image' }))?.props.source).toMatchObject({ width: 720, height: 720 })
+    expect(assets.requests).toHaveLength(97)
+    await buddy.unmount()
+  })
+
+  test('a stalled asset request times out without turning an image-capable terminal into raster mode', async ($, on) => {
+    const assets = await hostedBundle(on)
+    const { clock } = fikaEnvironment(on, [], '', { HOME: '/buddy-user', MOCK_IMAGE_SUPPORT: '1' })
+    assets.setDelay(60_000, clock)
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    const buddy = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+    await clock.settle()
+    await clock.advance(30_001)
+    expect(await buddy.find({ key: 'buddy-assets-retry' })).toBeDefined()
+    expect(await buddy.find({ type: 'Image' })).toBeDefined()
+    expect(await buddy.find({ type: 'Raster' })).toBeUndefined()
+    expect(assets.files.size).toBe(0)
+    assets.setDelay(0, clock)
+    await buddy.press({ key: 'buddy-assets-retry' })
+    await clock.settle()
+    expect((await buddy.find({ type: 'Image' }))?.props.source).toHaveProperty('rgba')
+    expect(await buddy.find({ key: 'buddy-assets-retry' })).toBeUndefined()
+    expect(await buddy.find({ type: 'Raster' })).toBeUndefined()
+    await buddy.unmount()
+  })
+
+  test('typing while Fika waits for assets cancels the queued animation after readiness', async ($, on) => {
+    const assets = await hostedBundle(on)
+    const { clock, values } = fikaEnvironment(on, [], '', { HOME: '/buddy-user', MOCK_IMAGE_SUPPORT: '1', STH_FIKA_PREVIEW: '1' })
+    assets.setDelay(10_000, clock)
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    await clock.advance(2_000)
+    const buddy = await $.ui.mount({ plugin: 'sth-usage', surface: 'terminal', component: 'Pane', requestId: 'sth-usage', props: paneProps(64) })
+    await clock.settle()
+    await buddy.press({ key: 'fika' })
+    expect(values.get('fika')).toMatchObject({ playingUntil: null })
+    await $.prompt.fill({ text: 'Start work', mode: 'replace', origin: { kind: 'plugin', name: 'test' } })
+    assets.setDelay(0, clock)
+    await clock.advance(10_000)
+    await clock.settle()
+    expect(values.get('fika')).toMatchObject({ hasPrompt: true, ready: false, playingUntil: null })
+    expect(await buddy.find({ type: 'Text', text: 'Fika in Stockholm' })).toBeUndefined()
+    expect(await buddy.find({ key: 'buddy-preparation' })).toBeUndefined()
+    expect((await buddy.find({ type: 'Image' }))?.props.source).toMatchObject({ width: 384, height: 384 })
+    expect(assets.requests).toHaveLength(97)
     await buddy.unmount()
   })
 })
