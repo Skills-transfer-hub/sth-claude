@@ -1,6 +1,6 @@
 # Privacy and data handling
 
-Last updated: 2026-10-04. Applies to the Buddy · STH Claude Code mod (`sth-usage`).
+Last updated: 2026-10-05. Applies to the Buddy · STH Claude Code mod (`sth-usage`).
 
 ## Data the mod uses
 
@@ -21,6 +21,10 @@ The serialized file is limited to 16 KiB. Common credential patterns and URLs ar
 There is no automatic expiry. The file remains until it is overwritten by a later summary or deleted manually. Uninstalling the mod does not delete this project file. Disable or uninstall the mod and reload Claude Code before deleting it if you want to prevent it from being recreated. Review the file before sharing a project, and exclude `.sth/buddy-session.json` from version control when appropriate. Claude Code's own logs, session history, plugin state and retention are governed by Claude Code, separately from this file.
 
 ## Processes, credentials and network access
+
+In the lightweight release, image-capable terminals download public HD animation packets from `raw.githubusercontent.com`, owned by GitHub, using URLs pinned to one commit in `Skills-transfer-hub/sth-claude`. Each packet's size and SHA-256 are checked against the index bundled with the plugin before playback. Requests contain no prompt, transcript, project data, STH or GitHub credential, or mod-generated user identifier. As with any HTTPS request, GitHub receives the connection's IP address and ordinary HTTP metadata; its logging and retention follow GitHub's privacy policy. The mod does not add analytics events for these downloads.
+
+The verified animation cache remains on the user's machine without automatic expiry, across sessions, plugin updates and uninstallation. Its location is documented in the README. Failed or simultaneous preparations may leave incomplete cache generations; these are never used for playback. Closing Claude and deleting this dedicated cache removes them, but the next HD launch will require another download. Desktop and portable terminal animations remain bundled and do not make these requests. Once HD assets are verified locally, playback makes no network requests.
 
 Usage tracking does not make an additional model request or send a mod-specific analytics event. Diagnostics can run local version checks and `sth doctor`. STH status and catalog refreshes, setup and skill actions invoke your installed STH CLI; those commands can contact configured repositories or services, use existing CLI or Git credentials, and create or modify STH configuration and managed files. Their network behavior, telemetry and credential storage follow your STH CLI and provider settings. Project tests run only when you request them in the panel; those scripts have their own behavior.
 

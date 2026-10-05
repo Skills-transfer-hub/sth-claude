@@ -1,6 +1,6 @@
 # Buddy · Claude Code
 
-Version **0.3.1**. The version is also visible at the bottom of the Home panel.
+Version **0.3.2**. The version is also visible at the bottom of the Home panel.
 
 Buddy tracks Claude context and quotas, changed files and checks, then helps you find STH skills that fit your project.
 
@@ -19,7 +19,7 @@ The mod reads session and project information and saves a local Resume summary. 
 Requires Claude Code **2.1.287 or later** and Git. Run in your terminal:
 
 ```sh
-claude plugin marketplace add https://github.com/Skills-transfer-hub/sth-claude.git
+claude plugin marketplace add https://github.com/Skills-transfer-hub/sth-claude.git#codex/directory-release
 claude plugin install sth-usage@sth --scope user
 ```
 
@@ -35,6 +35,14 @@ claude plugin update sth-usage@sth
 Run `/reload-plugins` or restart Claude Code after updating. To uninstall, run `claude plugin uninstall sth-usage@sth`.
 
 See the official [mod installation guide](https://code.claude.com/docs/en/plugins/mods/overview) and [marketplace guide](https://code.claude.com/docs/en/plugin-marketplaces).
+
+## Animation availability
+
+The lightweight distribution includes the desktop animations and portable terminal animations. Their frames and playback rates are unchanged. Image-capable terminals prepare the original HD animations once: Buddy downloads pixel-data JSON from a fixed commit in the STH GitHub repository, verifies every file against the SHA-256 hashes shipped with the plugin, and caches all seven animations before playback. It never downloads or executes remote code, and never fetches frames while an animation plays.
+
+On the first HD launch, the original Buddy still image appears with preparation progress. If the network is unavailable, preparation can be retried; Buddy does not silently substitute lower-quality frames. Fika starts its full nine-second playback only after preparation completes. After a successful preparation, HD works offline and the cache survives plugin updates that use the same artwork. Desktop and portable terminal rendering require no asset download.
+
+The cache is `~/.cache/sth-buddy` on macOS/Linux and `%LOCALAPPDATA%/STH/Buddy` on Windows (or `.cache/sth-buddy` under the user profile when LocalAppData is unavailable). Uninstalling the plugin leaves this artwork cache for reinstalls. It contains public animation data, not prompts or project files; after closing Claude, it can be removed to reclaim disk space. See [PRIVACY.md](PRIVACY.md) for the download's data handling.
 
 ## Load the mod
 
@@ -125,6 +133,8 @@ python3 tools/publish_directory_release.py --source-root "$sth_source_root" --tr
 ```
 
 The publisher updates only `codex/directory-release`, which contains the compact plugin, marketplace, documentation and licensing notices. It refuses older versions and never force-pushes. Omitting `--publish` performs a dry run. Original artwork and development files remain on `main`.
+
+The default build verifies all 574 original frames, then references the immutable asset snapshot recorded in `tools/buddy-assets-source.json`. It fails if the generated asset hashes differ from that snapshot. Use `--embed-assets` for a fully self-contained build; changed artwork must be published as a new data snapshot and the pinned source updated before shipping another lightweight release. Ordinary code updates reuse the existing verified cache.
 
 Configure the Claude Directory source to follow `codex/directory-release` so future update checks see compact releases. Directory validation and review remain separate from GitHub publication. Marketplace users can install from `https://github.com/Skills-transfer-hub/sth-claude.git#codex/directory-release`; they enable automatic updates separately in `/plugin` → Marketplaces → `sth`.
 

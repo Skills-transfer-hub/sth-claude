@@ -14,6 +14,7 @@ from pathlib import Path
 MAX_ARCHIVE_BYTES = 48 * 1024 * 1024  # Headroom below the portal's 50 MiB ceiling.
 REPOSITORY = "Skills-transfer-hub/sth-claude"
 RELEASE_BRANCH = "codex/directory-release"
+STATES = {"ok", "work", "done", "error", "update", "noConfig"}
 
 
 def run_git(root: Path, *args: str) -> str:
@@ -22,6 +23,62 @@ def run_git(root: Path, *args: str) -> str:
 
 def dump(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def sha256(contents: bytes) -> str:
+    return hashlib.sha256(contents).hexdigest()
+
+
+def validate_asset_tree(source: Path, bundle: Path, receipt: dict) -> set[Path]:
+    """Validate what will ship, including every immutable hosted reference."""
+    data = bundle / "assets/buddy-codec"
+    remote_path, index_path = data / "remote.json", data / "index.json"
+    if remote_path.is_file() == index_path.is_file():
+        raise SystemExit("Bundle must have exactly one hosted or embedded Buddy manifest")
+    hosted = remote_path.is_file()
+    index = json.loads((remote_path if hosted else index_path).read_text())
+    remote = index.pop("remote", None)
+    if index.get("format") != "sth-rgba-delta-v1" or set(index.get("sequences", {})) != STATES | {"fika"}:
+        raise SystemExit("Buddy manifest format or animation sequences differ")
+    chunks = [chunk for info in index["sequences"].values() for chunk in info["chunks"]]
+    expected = {Path("assets/buddy-codec/remote.json" if hosted else "assets/buddy-codec/index.json")}
+    if hosted:
+        config = json.loads((source / "mods/sth-usage/tools/buddy-assets-source.json").read_text())
+        commit, asset_id = config.get("commit", ""), config.get("id", "")
+        url = f"https://raw.githubusercontent.com/{REPOSITORY}/{commit}/mods/sth-usage/assets/buddy-codec/"
+        canonical = (json.dumps(index, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        if (config.get("format") != "sth-buddy-assets-source-v1"
+                or not re.fullmatch(r"[0-9a-f]{40}", commit)
+                or not re.fullmatch(r"[0-9a-f]{64}", asset_id)
+                or config.get("baseUrl") != url
+                or remote != {"baseUrl": url, "id": asset_id}
+                or sha256(canonical) != asset_id):
+            raise SystemExit("Hosted Buddy manifest does not match the pinned asset source")
+        bootstrap = {}
+        for state in sorted(STATES):
+            relative = Path(f"assets/bootstrap/{state}.png")
+            original = source / f"mods/sth-usage/assets/frames/{state}/000.png"
+            if not (bundle / relative).is_file() or (bundle / relative).read_bytes() != original.read_bytes():
+                raise SystemExit(f"Bootstrap pose must be the exact original PNG: {state}")
+            bootstrap[state] = sha256((bundle / relative).read_bytes())
+            expected.add(relative)
+        metadata = {"baseUrl": url, "id": asset_id, "commit": commit, "indexSha256": asset_id,
+                    "packetCount": len(chunks), "packetBytes": sum(chunk["bytes"] for chunk in chunks),
+                    "bootstrapSha256": bootstrap}
+        if receipt.get("assetDelivery") != "hosted" or receipt.get("hostedAssetSource") != metadata:
+            raise SystemExit("Hosted asset receipt differs from the shipped files and pinned source")
+    else:
+        if remote is not None or receipt.get("assetDelivery", "embedded") != "embedded" or receipt.get("hostedAssetSource") is not None:
+            raise SystemExit("Embedded Buddy bundle must not claim hosted assets")
+        for chunk in chunks:
+            name = chunk.get("path", "")
+            if not re.fullmatch(r"(?:ok|work|done|error|update|noConfig|fika)/[0-9]{4}\.json", name):
+                raise SystemExit("Unexpected embedded Buddy packet path")
+            path = data / name
+            if not path.is_file() or path.stat().st_size != chunk["bytes"] or sha256(path.read_bytes()) != chunk["sha256"]:
+                raise SystemExit(f"Embedded Buddy packet differs from its manifest: {name}")
+            expected.add(path.relative_to(bundle))
+    return expected
 
 
 def main() -> None:
@@ -56,11 +113,10 @@ def main() -> None:
         raise SystemExit("Bundle must include third-party notices for its decoder")
     if not any((bundle / "tests").rglob("*.test.ts")):
         raise SystemExit("Bundle must include its regression tests")
-    if not (bundle / "assets/buddy-codec/index.json").is_file():
-        raise SystemExit("Compact Buddy codec data is missing")
     receipt = json.loads((bundle.parent / "receipt.json").read_text())
     if receipt.get("format") != "sth-rgba-delta-v1" or receipt.get("codecIncluded") is not True or receipt.get("pixelVerification") != "passed":
         raise SystemExit("Builder receipt must confirm codec inclusion and exact pixel verification")
+    asset_paths = validate_asset_tree(source, bundle, receipt)
     icon_name = manifest.get("icon")
     icon = Path(icon_name) if isinstance(icon_name, str) and icon_name and not icon_name.startswith(("https://", "http://")) else None
     if icon is not None and (icon.is_absolute() or ".." in icon.parts or not (bundle / icon).is_file()):
@@ -75,8 +131,8 @@ def main() -> None:
             continue
         if relative.parts[0] not in allowed and relative != icon and not (len(relative.parts) == 1 and relative.name.startswith("THIRD_PARTY")):
             raise SystemExit(f"Unexpected bundle entry: {relative}")
-        if relative.parts[0] == "assets" and relative.parts[1] != "buddy-codec" and relative != icon:
-            raise SystemExit(f"Original source artwork must remain on main: {relative}")
+        if relative.parts[0] == "assets" and relative not in asset_paths and relative != icon:
+            raise SystemExit(f"Unexpected artwork or animation data in release: {relative}")
         if any(part in {".git", ".env", "node_modules", "outputs", "previews", "__pycache__"} for part in relative.parts):
             raise SystemExit(f"Forbidden bundle entry: {relative}")
         if path.suffix.lower() in {".blend", ".mov", ".mp4", ".webm", ".pyc"}:
@@ -103,6 +159,8 @@ def main() -> None:
         "sourceRepository": REPOSITORY, "sourceCommit": commit,
         "sourceCommitTime": run_git(source, "show", "-s", "--format=%cI", commit),
         "releaseBranch": RELEASE_BRANCH, "pluginFilesSha256": hashes,
+        "assetDelivery": receipt.get("assetDelivery", "embedded"),
+        "hostedAssetSource": receipt.get("hostedAssetSource"),
     })
     (output / "README.md").write_text(
         f"# Buddy by STH · {version}\n\n"

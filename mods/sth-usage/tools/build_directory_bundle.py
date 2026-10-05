@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the compact Claude Directory distribution without changing Buddy pixels.
+"""Build the Claude Directory distribution without changing Buddy pixels.
 
 Usage:
   python tools/build_directory_bundle.py --source . --output /tmp/sth-directory \\
@@ -8,9 +8,11 @@ Usage:
 Requires Pillow and NumPy. Stage or commit all runtime files before building:
 the allowlist copies tracked files from hooks/, ui/, and types/, required listing
 documents, the manifest, and optionally tests/. Untracked media and experiments
-are never copied. Original PNGs remain in the source checkout; only lossless
-RGBA keyframes/deltas are distributed. Every encoded frame is decoded and
-checked against its source before the build can succeed.
+are never copied. Source PNG sequences remain in the source checkout. Lossless
+RGBA keyframes/deltas are verified against an immutable hosted asset release.
+The default bundle includes the pinned manifest and exact initial PNG poses;
+--embed-assets includes every lossless packet for a fully offline distribution.
+Every encoded frame is decoded and checked against its source in both modes.
 
 OUTPUT must not exist and must be outside the repository. It receives sth-usage/,
 receipt.json, and reproducible ZIP/tar.gz archives. Size checks cover individual
@@ -26,6 +28,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tarfile
@@ -51,6 +54,7 @@ MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 50 * 1024 * 1024
 RUNTIME_DIRECTORIES = ("hooks", "ui", "types")
 REQUIRED_FILES = ("README.md", "PRIVACY.md", "LICENSE", ".claude-plugin/plugin.json")
+ASSET_SOURCE_FILE = "tools/buddy-assets-source.json"
 
 
 def digest(data: bytes) -> str:
@@ -66,6 +70,56 @@ def write_json(path: Path, value: object) -> bytes:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return data
+
+
+def hosted_asset_source(source: Path, tracked: list[Path]) -> dict:
+    """Only a reviewed, tracked, commit-pinned asset source may be released."""
+    if Path(ASSET_SOURCE_FILE) not in tracked:
+        raise ValueError(f"Stage or commit {ASSET_SOURCE_FILE} before building hosted assets")
+    config = json.loads((source / ASSET_SOURCE_FILE).read_text())
+    commit, asset_id = config.get("commit", ""), config.get("id", "")
+    expected = f"https://raw.githubusercontent.com/Skills-transfer-hub/sth-claude/{commit}/mods/sth-usage/assets/buddy-codec/"
+    if (config.get("format") != "sth-buddy-assets-source-v1"
+            or not re.fullmatch(r"[0-9a-f]{40}", commit)
+            or not re.fullmatch(r"[0-9a-f]{64}", asset_id)
+            or config.get("baseUrl") != expected):
+        raise ValueError("Buddy asset source must pin a GitHub commit and the index SHA-256")
+    return config
+
+
+def externalize_assets(source: Path, data_root: Path, index: dict, config: dict) -> dict:
+    """Require exact hosted packets before replacing them with their manifest."""
+    index_data = json_bytes(index)
+    if digest(index_data) != config["id"]:
+        raise ValueError("Buddy assets differ from the pinned hosted release. Publish and verify a new "
+                         "immutable asset release, then update tools/buddy-assets-source.json; "
+                         "or use --embed-assets for a self-contained bundle.")
+    expected = {"index.json"}
+    for info in index["sequences"].values():
+        for chunk in info["chunks"]:
+            path = data_root / chunk["path"]
+            contents = path.read_bytes()
+            if len(contents) != chunk["bytes"] or digest(contents) != chunk["sha256"]:
+                raise ValueError(f"Packet differs from its verified manifest: {chunk['path']}")
+            expected.add(chunk["path"])
+    actual = {path.relative_to(data_root).as_posix() for path in data_root.rglob("*") if path.is_file()}
+    if actual != expected or (data_root / "index.json").read_bytes() != index_data:
+        raise ValueError("Encoded asset tree differs from the pinned manifest")
+    bootstrap = {}
+    for name in EXPECTED_SEQUENCES:
+        if name == "fika":
+            continue
+        original = source / "assets" / "frames" / name / "000.png"
+        target = data_root.parent / "bootstrap" / f"{name}.png"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(original, target)
+        bootstrap[name] = digest(target.read_bytes())
+    shutil.rmtree(data_root)
+    write_json(data_root / "remote.json", {**index, "remote": {"baseUrl": config["baseUrl"], "id": config["id"]}})
+    return {"baseUrl": config["baseUrl"], "id": config["id"], "commit": config["commit"],
+            "indexSha256": config["id"], "packetCount": len(expected) - 1,
+            "packetBytes": sum(chunk["bytes"] for info in index["sequences"].values() for chunk in info["chunks"]),
+            "bootstrapSha256": bootstrap}
 
 
 def encode_sequence(name: str, paths: list[Path], data_root: Path) -> dict:
@@ -257,9 +311,11 @@ def main() -> None:
     parser.add_argument("--source", type=Path, required=True, help="Mod root containing .claude-plugin/plugin.json and tracked PNGs")
     parser.add_argument("--output", type=Path, required=True, help="New output directory outside the source repository; never overwritten")
     parser.add_argument("--include-tests", action="store_true", help="Include tracked tests/ for validation of the produced bundle")
+    parser.add_argument("--embed-assets", action="store_true", help="Include all verified animation packets for a fully offline bundle")
     args = parser.parse_args()
     source, out = args.source.resolve(), args.output.resolve()
     repo, tracked = tracked_files(source)
+    asset_source = None if args.embed_assets else hosted_asset_source(source, tracked)
     if out == repo or repo in out.parents:
         raise ValueError("Output must be outside the source repository")
     out.mkdir(parents=True, exist_ok=False)
@@ -275,8 +331,10 @@ def main() -> None:
             raise ValueError(f"No frames for sequence {name}")
         index["sequences"][name] = encode_sequence(name, paths, data_root)
     write_json(data_root / "index.json", index)
+    hosted = externalize_assets(source, data_root, index, asset_source) if asset_source else None
     receipt = {"format": FORMAT, "source": str(source), "plugin": str(plugin),
-               "codecIncluded": codec_included and (data_root / "index.json").is_file(),
+               "codecIncluded": codec_included and (data_root / ("remote.json" if hosted else "index.json")).is_file(),
+               "assetDelivery": "hosted" if hosted else "embedded", "hostedAssetSource": hosted,
                "runtimeValidation": "not-run", "pixelVerification": "passed",
                "frameCount": sum(len(paths) for _, paths in sequences),
                "chunkSize": CHUNK_SIZE, "keyframeInterval": KEYFRAME_INTERVAL,
