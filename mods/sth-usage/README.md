@@ -1,6 +1,6 @@
 # Buddy · Claude Code
 
-Version **0.3.3**. The version is also visible at the bottom of the Home panel.
+Version **0.3.4**. The version is also visible at the bottom of the Home panel.
 
 Buddy tracks Claude context and quotas, changed files and checks, then helps you find STH skills that fit your project.
 
