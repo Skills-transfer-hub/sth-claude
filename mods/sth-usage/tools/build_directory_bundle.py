@@ -54,9 +54,20 @@ EXPECTED_SEQUENCES = {
 MAX_PLUGIN_BYTES = 200 * 1024 * 1024
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 50 * 1024 * 1024
+MAX_SCRIPT_BYTES = 1024 * 1024
+SCRIPT_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".tsx", ".py", ".sh"}
+IMAGE_FORMATS = {".png": "PNG", ".webp": "WEBP", ".jpg": "JPEG", ".jpeg": "JPEG", ".gif": "GIF"}
 RUNTIME_DIRECTORIES = ("hooks", "ui", "types")
 REQUIRED_FILES = ("README.md", "PRIVACY.md", "LICENSE", ".claude-plugin/plugin.json")
 ASSET_SOURCE_FILE = "tools/buddy-assets-source.json"
+REVIEW_TOOLS = (
+    "build_directory_bundle.py", "stage_directory_release.py", "test_directory_packaging.py",
+    "buddy-assets-source.json", "encode_buddy_frames.py", "encode_buddy_terminal.py",
+    "encode_fika_frames.py", "buddy_terminal_codec.py", "render_buddy_frames.py",
+    "render_fika_transparent.py", "fika_props.py", "fika_table.py", "check_buddy_assets.py",
+    "audit_buddy_media.py", "README.md",
+)
+REVIEW_VENDOR = ("README.md", "browser.js", "entry.js", "rebuild.py")
 
 
 def digest(data: bytes) -> str:
@@ -270,7 +281,92 @@ def source_sequences(source: Path, tracked: list[Path]) -> list[tuple[str, list[
     return sequences
 
 
+def copy_review_sources(source: Path, plugin: Path, repo: Path, tracked: list[Path]) -> dict:
+    """Ship readable build inputs and bind copied files to the exact source bytes."""
+    selected = [(Path("tools") / name, Path("review-source/tools") / name) for name in REVIEW_TOOLS]
+    selected += [(Path("review-source/fflate") / name, Path("review-source/fflate") / name) for name in REVIEW_VENDOR]
+    selected.append((Path("assets/model/buddy-v6.blend"), Path("review-source/artwork/buddy-v6.blend")))
+    tracked_set = set(tracked)
+    missing = [str(original) for original, _ in selected if original not in tracked_set or not (source / original).is_file()]
+    if missing:
+        raise FileNotFoundError("Stage or commit required review sources: " + ", ".join(missing))
+    copied = []
+    for original, relative in selected:
+        destination = plugin / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / original, destination)
+        copied.append({"path": relative.as_posix(), "sourcePath": original.as_posix(),
+                       "sha256": digest(destination.read_bytes())})
+    # Runtime TS/TSX and the readable decoder ship as-is, not as a compiled
+    # substitute. Record these too so release staging can verify that claim.
+    for path in sorted(plugin.rglob("*")):
+        relative = path.relative_to(plugin)
+        if path.is_file() and relative.parts[0] not in {"review-source", "tests"}:
+            original = source / relative
+            if relative in tracked_set and original.is_file() and path.read_bytes() == original.read_bytes():
+                copied.append({"path": relative.as_posix(), "sourcePath": relative.as_posix(),
+                               "sha256": digest(path.read_bytes())})
+    prefix = source.relative_to(repo).as_posix()
+    commit = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    dirty = subprocess.run(["git", "-C", str(repo), "diff", "--quiet", "HEAD", "--", prefix]).returncode != 0
+    images = []
+    for _, paths in source_sequences(source, tracked):
+        for path in paths:
+            images.append({"path": path.relative_to(source).as_posix(), "bytes": path.stat().st_size,
+                           "sha256": digest(path.read_bytes())})
+    manifest = {"format": "sth-review-source-v1", "sourceCommit": commit, "sourceHasChanges": dirty,
+                "sourceRepository": "https://github.com/Skills-transfer-hub/sth-claude",
+                "sourceRoot": prefix, "includedFiles": sorted(copied, key=lambda entry: entry["path"]),
+                "originalFrameFiles": sorted(images, key=lambda entry: entry["path"])}
+    write_json(plugin / "review-source/source-manifest.json", manifest)
+    (plugin / "review-source/README.md").write_text(
+        "# Submitted build sources\n\n"
+        "The plugin ships its readable hooks, UI, types and vendored decoder unchanged. "
+        "This folder also includes the exact packaging/encoding scripts, upstream decoder "
+        "input and original Buddy Blender model. None of these review files is registered "
+        "as a runtime hook. See `fflate/README.md` to reproduce the decoder byte for byte.\n\n"
+        "`source-manifest.json` records the source commit and SHA-256 of every copied input. "
+        "`sourceHasChanges` identifies a local preview; release staging rejects those previews. "
+        "The original 574 rendered PNG frames are inventoried with their exact hashes; they "
+        "remain in the source repository at the recorded commit rather than being duplicated "
+        "in the compact distribution. The build checks every decoded animation pixel against them.\n\n"
+        "To rebuild the complete distribution, check out that commit, install the pinned "
+        "Pillow 12.3.0 and NumPy 2.3.5 build dependencies, and run "
+        "`python mods/sth-usage/tools/build_directory_bundle.py --source mods/sth-usage "
+        "--output /tmp/buddy-review-build --include-tests`. Run "
+        "`python mods/sth-usage/tools/test_directory_packaging.py` to check packaging. "
+        "The output directory must be new. These are manually invoked build tools, "
+        "not commands launched by the installed plugin.\n")
+    return {"manifest": "review-source/source-manifest.json", "sourceCommit": commit,
+            "sourceHasChanges": dirty, "includedFileCount": len(copied), "originalFrameCount": len(images)}
+
+
+def validate_reviewable_files(plugin: Path) -> None:
+    """Reject unreadable/oversized scripts and mislabeled or damaged image files."""
+    for path in sorted(plugin.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(plugin)
+        if path.suffix.lower() in SCRIPT_SUFFIXES:
+            data = path.read_bytes()
+            if len(data) >= MAX_SCRIPT_BYTES:
+                raise ValueError(f"Scripts must be smaller than 1 MiB: {relative}")
+            try:
+                text = data.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise ValueError(f"Scripts must be readable UTF-8 text: {relative}") from error
+            if "\x00" in text:
+                raise ValueError(f"Scripts must not contain binary NUL bytes: {relative}")
+        expected = IMAGE_FORMATS.get(path.suffix.lower())
+        if expected:
+            with Image.open(path) as image:
+                if image.format != expected:
+                    raise ValueError(f"Image format does not match extension: {relative} ({image.format})")
+                image.verify()
+
+
 def archive_bundle(plugin: Path, out: Path) -> dict:
+    validate_reviewable_files(plugin)
     paths = sorted(p for p in plugin.rglob("*") if p.is_file())
     uncompressed_bytes = sum(path.stat().st_size for path in paths)
     oversized = [str(path.relative_to(plugin)) for path in paths if path.stat().st_size >= MAX_FILE_BYTES]
@@ -334,10 +430,12 @@ def main() -> None:
         index["sequences"][name] = encode_sequence(name, paths, data_root)
     write_json(data_root / "index.json", index)
     hosted = externalize_assets(source, data_root, index, asset_source) if asset_source else None
+    review_sources = copy_review_sources(source, plugin, repo, tracked)
     receipt = {"format": FORMAT, "source": str(source), "plugin": str(plugin),
                "codecIncluded": codec_included and (data_root / ("remote.json" if hosted else "index.json")).is_file(),
                "assetDelivery": "hosted" if hosted else "embedded", "hostedAssetSource": hosted,
                "runtimeValidation": "not-run", "pixelVerification": "passed",
+               "reviewSources": review_sources,
                "frameCount": sum(len(paths) for _, paths in sequences),
                "chunkSize": CHUNK_SIZE, "keyframeInterval": KEYFRAME_INTERVAL,
                "dependencies": {"Pillow": PIL.__version__, "numpy": np.__version__, "zlib": zlib.ZLIB_RUNTIME_VERSION},

@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, On, Register, RenderInput } from 'claude-code'
+import type { EngineInterface, On, ProcessRunResult, Register, RenderInput } from 'claude-code'
 import type { CatalogSkill } from '../types'
 import { panelChrome, paneNavigation } from './presentation'
 
@@ -156,9 +156,50 @@ async function manifest($: EngineInterface, root: string, file: string): Promise
   try { return await $.fs.read(joinRoot(root, file)) } catch { return null }
 }
 
+// Keep complete, fixed commands at the process boundary for directory review.
+// The selected stack chooses a case; it never supplies an executable or flags.
+async function runVersionProbe($: EngineInterface, argv: readonly string[], root: string): Promise<ProcessRunResult> {
+  switch (argv.join(' ')) {
+    case 'git --version': return $.process.run(['git', '--version'], { cwd: root, timeoutMs: 5_000 })
+    case 'node --version': return $.process.run(['node', '--version'], { cwd: root, timeoutMs: 5_000 })
+    case 'npm --version': return $.process.run(['npm', '--version'], { cwd: root, timeoutMs: 5_000 })
+    case 'pnpm --version': return $.process.run(['pnpm', '--version'], { cwd: root, timeoutMs: 5_000 })
+    case 'yarn --version': return $.process.run(['yarn', '--version'], { cwd: root, timeoutMs: 5_000 })
+    case 'bun --version': return $.process.run(['bun', '--version'], { cwd: root, timeoutMs: 5_000 })
+    case 'python3 --version': return $.process.run(['python3', '--version'], { cwd: root, timeoutMs: 5_000 })
+    case 'python --version': return $.process.run(['python', '--version'], { cwd: root, timeoutMs: 5_000 })
+    case 'cargo --version': return $.process.run(['cargo', '--version'], { cwd: root, timeoutMs: 5_000 })
+    case 'go version': return $.process.run(['go', 'version'], { cwd: root, timeoutMs: 5_000 })
+    case 'claude --version': return $.process.run(['claude', '--version'], { cwd: root, timeoutMs: 5_000 })
+    default: throw new Error('Unsupported diagnostic command')
+  }
+}
+
+async function runCliVersion($: EngineInterface, binary: string, root: string): Promise<ProcessRunResult> {
+  switch (binary) {
+    case 'sth': return $.process.run(['sth', 'version'], { cwd: root, timeoutMs: 5_000 })
+    case 'sth.exe': return $.process.run(['sth.exe', 'version'], { cwd: root, timeoutMs: 5_000 })
+    case '/opt/homebrew/bin/sth': return $.process.run(['/opt/homebrew/bin/sth', 'version'], { cwd: root, timeoutMs: 5_000 })
+    case '/usr/local/bin/sth': return $.process.run(['/usr/local/bin/sth', 'version'], { cwd: root, timeoutMs: 5_000 })
+    case '/home/linuxbrew/.linuxbrew/bin/sth': return $.process.run(['/home/linuxbrew/.linuxbrew/bin/sth', 'version'], { cwd: root, timeoutMs: 5_000 })
+    default: throw new Error('Unsupported STH executable')
+  }
+}
+
+async function runCliDoctor($: EngineInterface, binary: string, root: string): Promise<ProcessRunResult> {
+  switch (binary) {
+    case 'sth': return $.process.run(['sth', 'doctor', '--json'], { cwd: root, timeoutMs: 30_000 })
+    case 'sth.exe': return $.process.run(['sth.exe', 'doctor', '--json'], { cwd: root, timeoutMs: 30_000 })
+    case '/opt/homebrew/bin/sth': return $.process.run(['/opt/homebrew/bin/sth', 'doctor', '--json'], { cwd: root, timeoutMs: 30_000 })
+    case '/usr/local/bin/sth': return $.process.run(['/usr/local/bin/sth', 'doctor', '--json'], { cwd: root, timeoutMs: 30_000 })
+    case '/home/linuxbrew/.linuxbrew/bin/sth': return $.process.run(['/home/linuxbrew/.linuxbrew/bin/sth', 'doctor', '--json'], { cwd: root, timeoutMs: 30_000 })
+    default: throw new Error('Unsupported STH executable')
+  }
+}
+
 async function probe($: EngineInterface, name: string, argv: readonly string[], root: string): Promise<ProjectView['dependencies'][number]> {
   try {
-    const result = await $.process.run(argv, { cwd: root, timeoutMs: 5_000 })
+    const result = await runVersionProbe($, argv, root)
     return {
       name, available: result.exitCode === 0,
       version: result.exitCode === 0 ? safeDiagnosticText(result.stdout || result.stderr).split('\n')[0]?.slice(0, 160) || null : null,
@@ -173,7 +214,7 @@ async function detectCli($: EngineInterface, root: string): Promise<Pick<Project
   let inaccessible = false
   for (const candidate of STH_BINARIES) {
     try {
-      const result = await $.process.run([candidate, 'version'], { cwd: root, timeoutMs: 5_000 })
+      const result = await runCliVersion($, candidate, root)
       return { cliStatus: 'available', cliBinary: candidate, cliVersion: result.exitCode === 0 ? safeDiagnosticText(result.stdout).split('\n')[0] || null : null }
     } catch (failure) {
       // A desktop host may not support process.run. Only an explicit missing
@@ -259,7 +300,7 @@ export async function refreshProject($: EngineInterface, full = true): Promise<P
         }
         if (cli.cliBinary) {
           try {
-            const result = await $.process.run([cli.cliBinary, 'doctor', '--json'], { cwd: root, timeoutMs: 30_000 })
+            const result = await runCliDoctor($, cli.cliBinary, root)
             const parsed = parseDoctorChecks(result.stdout)
             if (parsed) checks = parsed
             else message = 'This STH version does not provide a recognized JSON diagnostic. Prepare a prompt to inspect sth doctor.'

@@ -1,6 +1,6 @@
 # Privacy and data handling
 
-Last updated: 2026-10-05. Applies to the Buddy · STH Claude Code mod (`sth-usage`).
+Last updated: 2026-10-08. Applies to the Buddy · STH Claude Code mod (`sth-usage`).
 
 ## Data the mod uses
 
@@ -26,9 +26,17 @@ In the lightweight release, image-capable terminals download public HD animation
 
 The verified animation cache remains on the user's machine without automatic expiry, across sessions, plugin updates and uninstallation. Its location is documented in the README. Failed or simultaneous preparations may leave incomplete cache generations; these are never used for playback. Closing Claude and deleting this dedicated cache removes them, but the next HD launch will require another download. Desktop and portable terminal animations remain bundled and do not make these requests. Once HD assets are verified locally, playback makes no network requests.
 
-Usage tracking does not make an additional model request or send a mod-specific analytics event. Diagnostics can run local version checks and `sth doctor`. STH status and catalog refreshes, setup and skill actions invoke your installed STH CLI; those commands can contact configured repositories or services, use existing CLI or Git credentials, and create or modify STH configuration and managed files. Their network behavior, telemetry and credential storage follow your STH CLI and provider settings. Project tests run only when you request them in the panel; those scripts have their own behavior.
+Usage tracking does not make an additional model request or send a mod-specific analytics event. On session start and directory changes, Buddy probes the installed STH executable with `sth version`; linked projects also refresh `sth status --json`. Full diagnostics are requested through `/sth-doctor`, Diagnostics or Check installation, and run local version checks plus `sth doctor --json`. Selecting Catalog or Load catalog runs `sth list --json`. The README's [program inventory](README.md#programs-and-command-calls) lists every command form, trigger and timeout.
 
-The STH dashboard and documentation links open external websites when you activate them. Their websites have their own data-handling practices. Resume and verification buttons fill a Claude draft; they do not submit it. If you send that draft, Claude processes it under your Claude account's settings and terms.
+Setup, installation, removal and updates launch the installed STH CLI only from the corresponding panel actions. Setup passes the selected provider, repository, ref, catalog path, target assistants and visibility through stdin. Skill actions pass the selected resource and provider identifiers as individual command arguments. The subprocess also receives the project directory as cwd. The mod does not add your prompt, transcript, observed tool inputs, command output or Resume summary to these arguments.
+
+These STH commands can contact repositories and services configured in `.sth/project.json` and your CLI settings. The setup form accepts GitHub, GitLab, Azure DevOps and Bitbucket repositories, including user-entered hosts. The reviewed CLI source uses `api.github.com`, `raw.githubusercontent.com`, `gitlab.com`, `dev.azure.com` and `api.bitbucket.org` by default for repository access, and `jcdadtdkgnwobejkmpgv.supabase.co` for its configured STH Cloud features. CLI environment overrides can replace those hosts; the README lists the override names. Repository requests, existing CLI/Git credentials, telemetry and credential retention depend on the installed STH CLI and provider settings. Setup clears `STH_TOKEN`, `GITHUB_TOKEN`, `GITLAB_TOKEN`, `AZURE_DEVOPS_EXT_PAT`, `AZURE_DEVOPS_TOKEN` and `BITBUCKET_TOKEN` in that subprocess environment; it does not clear existing credential stores. Buddy does not upload project content itself through its animation HTTP helper.
+
+Project setup intentionally establishes `.sth/project.json` and can add STH state-file exclusions to `.gitignore`. Skill actions intentionally change managed assistant content under `.claude`, `.github`, `.codex`, `.cursor`, `.agents` or `.gemini`; Codex/Gemini instruction resources can also update managed regions in `AGENTS.md` / `GEMINI.md`. CLI state includes `sth-state-v2.json` under the configured target directory and `.sth/last-operation.json`. These paths reflect the reviewed CLI source; exact writes depend on the installed CLI version, selected assistant targets and catalog. Uninstalling Buddy does not undo these STH changes. The mod's own filesystem writer only writes the Resume file and animation cache described above.
+
+Project tests run only when you request them in Summary. This launches the project's package-manager test script (npm, pnpm, yarn or bun, with non-watch flags for recognized Vitest/Jest scripts) or `claude plugin test .`. The project's scripts and tools determine their own filesystem writes, subprocesses and network behavior. Merely opening Diagnostics or observing a process event does not run those tests.
+
+The STH dashboard link opens `www.skillsth.com`; installation documentation and release links open `github.com` when you activate them. These links carry no prompt or project data. Their websites have their own data-handling practices. Resume and verification buttons fill a Claude draft; they do not submit it. If you send that draft, Claude processes it under your Claude account's settings and terms.
 
 ## Support
 

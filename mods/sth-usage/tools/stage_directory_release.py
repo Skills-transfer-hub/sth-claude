@@ -15,6 +15,8 @@ import subprocess
 import zipfile
 from pathlib import Path
 
+from build_directory_bundle import REVIEW_TOOLS, REVIEW_VENDOR, validate_reviewable_files
+
 MAX_ARCHIVE_BYTES = 48 * 1024 * 1024  # Headroom below the portal's 50 MiB ceiling.
 REPOSITORY = "Skills-transfer-hub/sth-claude"
 RELEASE_BRANCH = "codex/directory-release"
@@ -85,11 +87,65 @@ def validate_asset_tree(source: Path, bundle: Path, receipt: dict) -> set[Path]:
     return expected
 
 
+def validate_review_sources(source: Path, bundle: Path, receipt: dict) -> None:
+    """Check submitted build inputs against the source, not just self-reported hashes."""
+    root = bundle / "review-source"
+    manifest_path = root / "source-manifest.json"
+    if not manifest_path.is_file():
+        raise SystemExit("Bundle must include its review-source manifest")
+    manifest = json.loads(manifest_path.read_text())
+    commit = run_git(source, "rev-parse", "HEAD")
+    if (manifest.get("format") != "sth-review-source-v1" or manifest.get("sourceCommit") != commit
+            or manifest.get("sourceHasChanges") is not False
+            or manifest.get("sourceRoot") != "mods/sth-usage"
+            or manifest.get("sourceRepository") != f"https://github.com/{REPOSITORY}"):
+        raise SystemExit("Review sources must identify the exact clean source commit")
+    expected = {Path("review-source/tools") / name for name in REVIEW_TOOLS}
+    expected |= {Path("review-source/fflate") / name for name in REVIEW_VENDOR}
+    expected |= {Path("review-source/artwork/buddy-v6.blend"), Path("review-source/README.md"),
+                 Path("review-source/source-manifest.json")}
+    actual = {path.relative_to(bundle) for path in root.rglob("*") if path.is_file()}
+    if actual != expected:
+        raise SystemExit("Review-source files differ from the allowed source payload")
+    seen = set()
+    for entry in manifest.get("includedFiles", []):
+        relative, original = Path(entry["path"]), Path(entry["sourcePath"])
+        if relative.is_absolute() or original.is_absolute() or ".." in relative.parts or ".." in original.parts or relative in seen:
+            raise SystemExit("Invalid or duplicate review-source manifest path")
+        seen.add(relative)
+        bundled, source_file = bundle / relative, source / "mods/sth-usage" / original
+        if (not bundled.is_file() or not source_file.is_file()
+                or sha256(bundled.read_bytes()) != entry["sha256"]
+                or bundled.read_bytes() != source_file.read_bytes()):
+            raise SystemExit(f"Submitted source differs from its original: {relative}")
+    if not expected.difference({Path("review-source/README.md"), Path("review-source/source-manifest.json")}).issubset(seen):
+        raise SystemExit("Review-source manifest is missing required build inputs")
+    originals = manifest.get("originalFrameFiles", [])
+    source_frames = source / "mods/sth-usage/assets"
+    expected_frames = set(source_frames.glob("frames/*/*.png")) | set(source_frames.glob("fika/*.png"))
+    seen_frames = set()
+    for entry in originals:
+        relative = Path(entry["path"])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise SystemExit("Invalid original frame source path")
+        path = source / "mods/sth-usage" / relative
+        if path in seen_frames or path not in expected_frames or path.stat().st_size != entry["bytes"] or sha256(path.read_bytes()) != entry["sha256"]:
+            raise SystemExit(f"Original frame source inventory differs: {relative}")
+        seen_frames.add(path)
+    if seen_frames != expected_frames:
+        raise SystemExit("Original frame source inventory is incomplete")
+    expected_receipt = {"manifest": "review-source/source-manifest.json", "sourceCommit": commit,
+                        "sourceHasChanges": False, "includedFileCount": len(manifest["includedFiles"]),
+                        "originalFrameCount": len(originals)}
+    if receipt.get("reviewSources") != expected_receipt:
+        raise SystemExit("Review-source receipt differs from the submitted source manifest")
+
+
 def release_files(bundle: Path, asset_paths: set[Path], icon: Path | None) -> list[tuple[Path, Path]]:
     """Keep the tested runtime unchanged and omit test-only hook registrations."""
     if not any(path.is_file() for path in (bundle / "tests").rglob("*.test.ts")):
         raise SystemExit("Input bundle must include its regression tests before release staging")
-    allowed = {".claude-plugin", "hooks", "ui", "types", "tests", "assets", "README.md", "PRIVACY.md", "LICENSE", "tsconfig.json"}
+    allowed = {".claude-plugin", "hooks", "ui", "types", "tests", "assets", "review-source", "README.md", "PRIVACY.md", "LICENSE", "tsconfig.json"}
     files = []
     for path in sorted(bundle.rglob("*")):
         relative = path.relative_to(bundle)
@@ -103,7 +159,7 @@ def release_files(bundle: Path, asset_paths: set[Path], icon: Path | None) -> li
             raise SystemExit(f"Unexpected artwork or animation data in release: {relative}")
         if any(part in {".git", ".env", "node_modules", "outputs", "previews", "__pycache__"} for part in relative.parts):
             raise SystemExit(f"Forbidden bundle entry: {relative}")
-        if path.suffix.lower() in {".blend", ".mov", ".mp4", ".webm", ".pyc"}:
+        if path.suffix.lower() in {".blend", ".mov", ".mp4", ".webm", ".pyc"} and relative != Path("review-source/artwork/buddy-v6.blend"):
             raise SystemExit(f"Source media must remain on main: {relative}")
         if relative.parts[:2] == (".claude-plugin", "types"):
             raise SystemExit("Locally generated Claude SDK declarations must not be published")
@@ -148,6 +204,8 @@ def main() -> None:
     if receipt.get("format") != "sth-rgba-delta-v1" or receipt.get("codecIncluded") is not True or receipt.get("pixelVerification") != "passed":
         raise SystemExit("Builder receipt must confirm codec inclusion and exact pixel verification")
     asset_paths = validate_asset_tree(source, bundle, receipt)
+    validate_review_sources(source, bundle, receipt)
+    validate_reviewable_files(bundle)
     icon_name = manifest.get("icon")
     icon = Path(icon_name) if isinstance(icon_name, str) and icon_name and not icon_name.startswith(("https://", "http://")) else None
     if icon is not None and (icon.is_absolute() or ".." in icon.parts or not (bundle / icon).is_file()):
@@ -174,11 +232,14 @@ def main() -> None:
         "releaseBranch": RELEASE_BRANCH, "pluginFilesSha256": hashes,
         "assetDelivery": receipt.get("assetDelivery", "embedded"),
         "hostedAssetSource": receipt.get("hostedAssetSource"),
+        "reviewSources": receipt["reviewSources"],
     })
     (output / "README.md").write_text(
         f"# Buddy by STH · {version}\n\n"
-        "This branch contains the generated distribution. Source code and original artwork remain on "
-        f"[main](https://github.com/{REPOSITORY}/tree/main).\n\n"
+        "This branch contains the generated distribution, readable runtime source and "
+        "[submitted build inputs](mods/sth-usage/review-source/README.md). The original rendered PNG frames remain in "
+        f"[the exact source commit](https://github.com/{REPOSITORY}/tree/{commit}/mods/sth-usage/assets); "
+        "their SHA-256 hashes are included in the review-source manifest.\n\n"
         "Requires Claude Code 2.1.287 or later and Git.\n\n"
         "```sh\n"
         f"claude plugin marketplace add https://github.com/{REPOSITORY}.git#{RELEASE_BRANCH}\n"

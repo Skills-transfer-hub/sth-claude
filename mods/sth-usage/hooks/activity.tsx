@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, On, Register } from 'claude-code'
+import type { EngineInterface, On, ProcessRunResult, Register } from 'claude-code'
 import { isPromptText } from './fika'
 import { panelChrome, paneNavigation } from './presentation'
 
@@ -354,6 +354,27 @@ async function prepareVerification($: EngineInterface): Promise<void> {
   if (!result.isFilled) await update($, activityView, current => ({ ...current, message: 'The draft is unavailable.' }))
 }
 
+// Only these complete argv forms may reach the process API. The package's test
+// script still runs project code; it requires the explicit Run tests action.
+async function runTestCommand($: EngineInterface, argv: readonly string[], root: string): Promise<ProcessRunResult> {
+  switch (argv.join(' ')) {
+    case 'npm test': return $.process.run(['npm', 'test'], { cwd: root, timeoutMs: 120_000 })
+    case 'npm test -- --run': return $.process.run(['npm', 'test', '--', '--run'], { cwd: root, timeoutMs: 120_000 })
+    case 'npm test -- --watch=false': return $.process.run(['npm', 'test', '--', '--watch=false'], { cwd: root, timeoutMs: 120_000 })
+    case 'pnpm test': return $.process.run(['pnpm', 'test'], { cwd: root, timeoutMs: 120_000 })
+    case 'pnpm test --run': return $.process.run(['pnpm', 'test', '--run'], { cwd: root, timeoutMs: 120_000 })
+    case 'pnpm test --watch=false': return $.process.run(['pnpm', 'test', '--watch=false'], { cwd: root, timeoutMs: 120_000 })
+    case 'yarn test': return $.process.run(['yarn', 'test'], { cwd: root, timeoutMs: 120_000 })
+    case 'yarn test --run': return $.process.run(['yarn', 'test', '--run'], { cwd: root, timeoutMs: 120_000 })
+    case 'yarn test --watch=false': return $.process.run(['yarn', 'test', '--watch=false'], { cwd: root, timeoutMs: 120_000 })
+    case 'bun test': return $.process.run(['bun', 'test'], { cwd: root, timeoutMs: 120_000 })
+    case 'bun test --run': return $.process.run(['bun', 'test', '--run'], { cwd: root, timeoutMs: 120_000 })
+    case 'bun test --watch=false': return $.process.run(['bun', 'test', '--watch=false'], { cwd: root, timeoutMs: 120_000 })
+    case 'claude plugin test .': return $.process.run(['claude', 'plugin', 'test', '.'], { cwd: root, timeoutMs: 120_000 })
+    default: throw new Error('Unsupported test command')
+  }
+}
+
 async function runTests($: EngineInterface): Promise<void> {
   const view = await read($, activityView)
   if (!view.testCommand || view.testsRunning || turnId !== null) return
@@ -361,7 +382,7 @@ async function runTests($: EngineInterface): Promise<void> {
   const testRoot = cwd
   const epoch = activityEpoch
   try {
-    const result = await $.process.run(view.testCommand.argv, { cwd: testRoot, timeoutMs: 120_000 })
+    const result = await runTestCommand($, view.testCommand.argv, testRoot)
     if (epoch !== activityEpoch) return
     const evidence = testEvidence(view.testCommand.label, result)
     await recordManualTests($, evidence, `${view.testCommand.label} : ${testsCaption([evidence])} (code ${result.exitCode}).`)

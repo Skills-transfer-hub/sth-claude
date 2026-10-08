@@ -359,7 +359,7 @@ function startBuddyAssetPreparation($: EngineInterface): void {
         let timeout: Timer | undefined
         try {
           return await Promise.race([
-            $.http.fetch(url),
+            $.http.fetch(url, { method: 'GET' }),
             new Promise<never>((resolveTimeout, reject) => {
               timeout = $.clock.after(30_000, () => { reject(new Error('Buddy asset download timed out')) })
             }),
