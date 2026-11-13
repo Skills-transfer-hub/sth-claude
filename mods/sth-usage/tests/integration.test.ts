@@ -66,6 +66,8 @@ function initialProject(): ProjectView {
 
 function environment(on: On, initial: Record<string, unknown> = {}, missingSth = false) {
   mock.clock(on, { now: 1_800_000_000_000 })
+  // These suites cover the classic HD Buddy; tests/pet.test.ts covers the default pet strip.
+  mock.store(on, { homeView: 'classic' })
   const values = new Map<string, unknown>(Object.entries({
     skills: initialSkills(), projectView: initialProject(), activityView: initialActivity(),
     skillsTab: 'installed', fika: { startedAt: null, hasPrompt: true, ready: false, playingUntil: null },

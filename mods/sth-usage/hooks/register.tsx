@@ -2,6 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, FsBytes, Register, RenderInput, Timer } from 'claude-code'
 import { isPromptText, isUserPrompt } from './fika'
 import { terminalRaster } from './terminal-raster'
+import { PET_CLIPS, MAX_PETS, PET_COLORS } from '../ui/pet-world'
+import type { Clip as PetClip, Counts as PetCounts, Mood as PetMood, PetColor, PetSpec } from '../ui/pet-world'
+import { TERMINAL_ROWS as PET_ROWS } from '../ui/pet'
 import { EMPTY_CONTEXT, registerContext, statusPills, usagePillElement } from './context'
 import { activityCaption, activityBuddyState, registerActivity } from './activity'
 import { EMPTY_PROJECT, rankSkills, registerProject } from './project'
@@ -305,8 +308,8 @@ const terminalBuddies = new Map<string, TerminalBuddy>()
 const imageFallbacks = new Set<string>()
 let imageTerminal: boolean | null = null
 let buddyAnimation: Timer | undefined
-const rasterSheets = new Map<Sequence, Promise<RasterSheet>>()
-const desktopSheets = new Map<Sequence, Promise<string[]>>()
+const rasterSheets = new Map<SheetName, Promise<RasterSheet>>()
+const desktopSheets = new Map<SheetName, Promise<string[]>>()
 // The Client each pane drew last; its pose requests must come from that Client.
 const desktopClients = new Map<string, { key: string; sequence: Sequence; props: object }>()
 // Client props hold at most 100,000 characters; poses stream in batches below that.
@@ -394,6 +397,8 @@ function startBuddyAssetPreparation($: EngineInterface): void {
 }
 
 // Each sheet's path is fixed text at its read, so every file the mod opens is named.
+type SheetName = Sequence | PetClip
+
 function readRasterSheet($: EngineInterface, sequence: Sequence): Promise<FsBytes> {
   switch (sequence) {
     case 'ok': return $.fs.read(`${$.plugin.root}/assets/terminal/ok.png`, { as: 'bytes' })
@@ -406,8 +411,13 @@ function readRasterSheet($: EngineInterface, sequence: Sequence): Promise<FsByte
   }
 }
 
-function readDesktopSheet($: EngineInterface, sequence: Sequence): Promise<FsBytes> {
+function readDesktopSheet($: EngineInterface, sequence: SheetName): Promise<FsBytes> {
   switch (sequence) {
+    case 'walk': return $.fs.read(`${$.plugin.root}/assets/desktop/walk.webp`, { as: 'bytes' })
+    case 'run': return $.fs.read(`${$.plugin.root}/assets/desktop/run.webp`, { as: 'bytes' })
+    case 'jump': return $.fs.read(`${$.plugin.root}/assets/desktop/jump.webp`, { as: 'bytes' })
+    case 'sit': return $.fs.read(`${$.plugin.root}/assets/desktop/sit.webp`, { as: 'bytes' })
+    case 'sleep': return $.fs.read(`${$.plugin.root}/assets/desktop/sleep.webp`, { as: 'bytes' })
     case 'ok': return $.fs.read(`${$.plugin.root}/assets/desktop/ok.webp`, { as: 'bytes' })
     case 'work': return $.fs.read(`${$.plugin.root}/assets/desktop/work.webp`, { as: 'bytes' })
     case 'done': return $.fs.read(`${$.plugin.root}/assets/desktop/done.webp`, { as: 'bytes' })
@@ -419,13 +429,13 @@ function readDesktopSheet($: EngineInterface, sequence: Sequence): Promise<FsByt
 }
 
 // Sheets are read once per load; a failed read stays failed until the mod reloads.
-function sheet<T>(cache: Map<Sequence, Promise<T>>, sequence: Sequence, load: () => Promise<T>): Promise<T> {
+function sheet<T>(cache: Map<SheetName, Promise<T>>, sequence: SheetName, load: () => Promise<T>): Promise<T> {
   let entry = cache.get(sequence)
   if (!entry) cache.set(sequence, entry = load())
   return entry
 }
 
-function desktopPoses($: EngineInterface, sequence: Sequence): Promise<string[]> {
+function desktopPoses($: EngineInterface, sequence: SheetName): Promise<string[]> {
   return sheet(desktopSheets, sequence, async () => webpPoses(fromBase64((await readDesktopSheet($, sequence)).base64)))
 }
 
@@ -632,6 +642,72 @@ async function animateTerminalFika($: EngineInterface): Promise<void> {
     if (pose === entry.lastFrame) continue
     blitBuddy($, requestId, entry, frame)
   }
+}
+
+// Pets: Home's strip where Buddies roam; ui/pet.ts animates and draws them.
+const PET_DESKTOP_COUNTS: PetCounts = { walk: 24, run: 12, jump: 20, sit: 40, sleep: 60, ok: 80, update: 36, error: 30 }
+const DEFAULT_PETS: PetSpec[] = [{ id: 'buddy', color: 'graphite' }]
+const PET_KEY = 'buddy-pets'
+const petClients = new Map<string, { key: string; props: object }>()
+let petBalls = 0
+
+function isPetSpec(value: unknown): value is PetSpec {
+  const spec = value as Partial<PetSpec> | null
+  return typeof spec?.id === 'string' && spec.id.length <= 40 && typeof spec.color === 'string' && spec.color in PET_COLORS
+}
+
+async function loadPets($: EngineInterface): Promise<PetSpec[]> {
+  const stored = await $.store.get('pets').catch(() => undefined)
+  const pets = Array.isArray(stored) ? stored.filter(isPetSpec).slice(0, MAX_PETS) : []
+  return pets.length ? pets : DEFAULT_PETS
+}
+
+async function saveHome($: EngineInterface, key: 'pets' | 'homeView', value: unknown): Promise<void> {
+  await $.store.set(key, value).catch((error: unknown) => $.ui.log(`Buddy ${key} was not saved: ${String(error)}`, { to: 'debug' }))
+  $.ui.invalidate('ui.render')
+}
+
+/** Home shows the pet strip unless the person chose the classic HD Buddy. */
+async function homeView($: EngineInterface): Promise<'pets' | 'classic'> {
+  return await $.store.get('homeView').catch(() => undefined) === 'classic' ? 'classic' : 'pets'
+}
+
+/** Pets follow Claude's activity; quota levels stay in the caption, so a busy week never freezes them. */
+function petMood(activity: ActivityView, working: boolean): PetMood {
+  const held = activityBuddyState(activity)
+  return held === 'update' ? 'waiting' : held === 'error' ? 'error' : working ? 'working' : 'idle'
+}
+
+async function petElement($: EngineInterface, e: RenderInput<'Pane'>, requestId: string, mood: PetMood, caption: string) {
+  if (e.surface !== 'terminal' && e.surface !== 'desktop') {
+    const { Text } = $.ui.resolve(e)
+    return <Text>{caption}</Text>
+  }
+  const props = {
+    surface: e.surface, mood, caption, pets: await loadPets($), balls: petBalls,
+    counts: PET_DESKTOP_COUNTS,
+  }
+  petClients.set(requestId, { key: PET_KEY, props })
+  const { Client } = $.ui.resolve(e)
+  return e.surface === 'terminal'
+    ? Client({ module: '../ui/pet.ts', key: PET_KEY, props, width: '100%', height: PET_ROWS })
+    : Client({ module: '../ui/pet.ts', key: PET_KEY, props, width: '100%' })
+}
+
+async function petControls($: EngineInterface, e: RenderInput<'Pane'>) {
+  const { Text } = $.ui.resolve(e)
+  const { Toolbar, Button } = panelChrome($.ui.resolve(e), e)
+  const pets = await loadPets($)
+  const color = (Object.keys(PET_COLORS) as PetColor[]).find(candidate => !pets.some(pet => pet.color === candidate))
+  return <Toolbar key="pet-controls">
+    <Button key="pet-ball" label="Throw ball" onPress={() => { petBalls += 1; $.ui.invalidate('ui.render') }} />
+    {pets.length < MAX_PETS && color && <Button key="pet-add" label="+ Pet" onPress={async () => {
+      await saveHome($, 'pets', [...pets, { id: `pet-${await $.clock.now()}`, color }])
+    }} />}
+    {pets.length > 1 && <Button key="pet-remove" label="− Pet" onPress={() => saveHome($, 'pets', pets.slice(0, -1))} />}
+    <Button key="home-classic" label="Classic Buddy" onPress={() => saveHome($, 'homeView', 'classic')} />
+    <Text dimColor>Click a Buddy to pet it, or the floor to drop a ball.</Text>
+  </Toolbar>
 }
 
 function dashboardLink($: EngineInterface, e: RenderInput<'Pane'>, label = 'STH dashboard') {
@@ -1134,6 +1210,25 @@ export const register: Register = on => {
     return batch.length ? { props: { ...client.props, batch: { sequence: client.sequence, first, poses: batch } } } : {}
   })
 
+  // The desktop pet strip asks for the Buddy 3D poses it lacks, any clip: answer one batch.
+  on('ui.message', { module: /^ui\/pet\.ts$/ }, async ($, e) => {
+    const client = petClients.get(e.requestId)
+    const data = e.data as { sequence?: unknown; first?: unknown } | null
+    if (!client || client.key !== e.element || typeof data?.sequence !== 'string' || !Number.isInteger(data.first)) return {}
+    const clip = data.sequence as PetClip
+    if (!PET_CLIPS.includes(clip)) return {}
+    const poses = await desktopPoses($, clip).catch((error: unknown) => {
+      $.ui.log(`Buddy pet poses failed: ${String(error)}`, { to: 'debug' })
+      return [] as string[]
+    })
+    const first = data.first as number, batch: string[] = []
+    for (let index = first, size = 0; index >= 0 && index < poses.length && (!batch.length || size + poses[index]!.length <= POSE_BATCH_CHARS); index += 1) {
+      batch.push(poses[index]!)
+      size += poses[index]!.length
+    }
+    return batch.length ? { props: { ...client.props, batch: { sequence: data.sequence, first, poses: batch } } } : {}
+  })
+
   on('session.start', async ($, e, next) => {
     await startFika($)
     await $.command.register({
@@ -1526,8 +1621,12 @@ export const register: Register = on => {
     const nowMs = await $.clock.now()
     const playingFika = showFika && fika.playingUntil != null && fika.playingUntil > nowMs
     const caption = playingFika ? 'Buddy is taking a fika break in Stockholm' : activityCaption(activity) ?? BUDDY_CAPTIONS[state]
-    const buddy = await buddyElement($, e, PANE, state, caption,
-      playingFika ? fika.playingUntil! - FIKA_DURATION_MS : null, showFika)
+    // Fika keeps its own scene; otherwise the Buddies roam the pet strip.
+    const pets = !playingFika && await homeView($) === 'pets' && (e.surface === 'terminal' || e.surface === 'desktop')
+    const buddy = pets
+      ? await petElement($, e, PANE, petMood(activity, working), caption)
+      : await buddyElement($, e, PANE, state, caption, playingFika ? fika.playingUntil! - FIKA_DURATION_MS : null, showFika)
+    if (pets) terminalBuddies.delete(PANE)
     const pills = statusPills({ ...context, limits: current.limits }, totals, current.costUsd, nowMs)
 
     return (
@@ -1539,6 +1638,8 @@ export const register: Register = on => {
             <Text bold>Buddy</Text>
             <Text key="buddy-caption" dimColor wrap="truncate-end">{caption}</Text>
           </Box>
+          {pets ? await petControls($, e) : !playingFika && (e.surface === 'terminal' || e.surface === 'desktop') &&
+            <Button key="home-pets" label="Pets" onPress={() => saveHome($, 'homeView', 'pets')} />}
         </Box>
         <Box key="workflow-actions" flexDirection="row" flexWrap="wrap" alignItems="center" gap={1}>
           <Button key="open-skills" label="STH" variant="primary" onPress={() => openSkillsPane($)} />

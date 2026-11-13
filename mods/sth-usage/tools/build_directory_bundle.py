@@ -60,14 +60,18 @@ SCRIPT_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".tsx", ".py", ".sh"}
 IMAGE_FORMATS = {".png": "PNG", ".webp": "WEBP", ".jpg": "JPEG", ".jpeg": "JPEG", ".gif": "GIF"}
 RUNTIME_DIRECTORIES = ("hooks", "ui", "types")
 # One image file per animation; hooks/frame-sheets.ts reads them (see frame_sheets.py).
+# Pet clips (tools/author_pet_clips.py) ship as sheets only: the HD terminal codec does not carry them.
+PET_SEQUENCES = {"walk": 24, "run": 12, "jump": 20, "sit": 40, "sleep": 60}
+SHEET_POSES = {**{name: frames for name, (frames, _, _) in EXPECTED_SEQUENCES.items()}, **PET_SEQUENCES}
+# The terminal draws pets as Buddy Pixel (ui/pixel-buddy.ts), so pet clips ship as desktop sheets only.
 FRAME_SHEETS = tuple(f"assets/{folder}/{name}.{suffix}" for folder, suffix in (("desktop", "webp"), ("terminal", "png"))
-                     for name in EXPECTED_SEQUENCES)
+                     for name in (SHEET_POSES if folder == "desktop" else EXPECTED_SEQUENCES))
 REQUIRED_FILES = ("README.md", "PRIVACY.md", "LICENSE", ".claude-plugin/plugin.json")
 ASSET_SOURCE_FILE = "tools/buddy-assets-source.json"
 REVIEW_TOOLS = (
     "build_directory_bundle.py", "stage_directory_release.py", "test_directory_packaging.py",
     "buddy-assets-source.json", "frame_sheets.py", "fika-frames.json", "encode_buddy_frames.py", "encode_buddy_terminal.py",
-    "encode_fika_frames.py", "buddy_terminal_codec.py", "render_buddy_frames.py",
+    "encode_fika_frames.py", "buddy_terminal_codec.py", "render_buddy_frames.py", "author_pet_clips.py",
     "render_fika_transparent.py", "fika_props.py", "fika_table.py", "check_buddy_assets.py",
     "audit_buddy_media.py", "README.md",
 )
@@ -271,7 +275,7 @@ def source_sequences(source: Path, tracked: list[Path]) -> list[tuple[str, list[
         parts = relative.parts
         if len(parts) == 3 and parts[:2] == ("assets", "fika"):
             groups.setdefault("fika", []).append(source / relative)
-        elif len(parts) == 4 and parts[:2] == ("assets", "frames"):
+        elif len(parts) == 4 and parts[:2] == ("assets", "frames") and parts[2] not in PET_SEQUENCES:
             groups.setdefault(parts[2], []).append(source / relative)
     if set(groups) != set(EXPECTED_SEQUENCES):
         raise ValueError("Runtime sequence names differ: expected " + ", ".join(sorted(EXPECTED_SEQUENCES)))
@@ -317,10 +321,12 @@ def copy_review_sources(source: Path, plugin: Path, repo: Path, tracked: list[Pa
     commit = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     dirty = subprocess.run(["git", "-C", str(repo), "diff", "--quiet", "HEAD", "--", prefix]).returncode != 0
     images = []
-    for _, paths in source_sequences(source, tracked):
-        for path in paths:
-            images.append({"path": path.relative_to(source).as_posix(), "bytes": path.stat().st_size,
-                           "sha256": digest(path.read_bytes())})
+    # Every original pose: the codec sequences and the pet clips, which ship as sheets only.
+    pet_frames = [source / path for path in tracked if path.suffix == ".png" and len(path.parts) == 4
+                  and path.parts[:2] == ("assets", "frames") and path.parts[2] in PET_SEQUENCES]
+    for path in [*(path for _, paths in source_sequences(source, tracked) for path in paths), *pet_frames]:
+        images.append({"path": path.relative_to(source).as_posix(), "bytes": path.stat().st_size,
+                       "sha256": digest(path.read_bytes())})
     manifest = {"format": "sth-review-source-v1", "sourceCommit": commit, "sourceHasChanges": dirty,
                 "sourceRepository": "https://github.com/Skills-transfer-hub/sth-claude",
                 "sourceRoot": prefix, "includedFiles": sorted(copied, key=lambda entry: entry["path"]),

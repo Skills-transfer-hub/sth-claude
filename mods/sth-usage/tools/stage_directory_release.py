@@ -15,7 +15,7 @@ import subprocess
 import zipfile
 from pathlib import Path
 
-from build_directory_bundle import EXPECTED_SEQUENCES, FRAME_SHEETS, REVIEW_TOOLS, REVIEW_VENDOR, validate_reviewable_files
+from build_directory_bundle import FRAME_SHEETS, SHEET_POSES, REVIEW_TOOLS, REVIEW_VENDOR, validate_reviewable_files
 from frame_sheets import raster_frames, webp_frames
 
 MAX_ARCHIVE_BYTES = 48 * 1024 * 1024  # Headroom below the portal's 50 MiB ceiling.
@@ -101,7 +101,7 @@ def validate_frame_sheets(source: Path, bundle: Path) -> set[Path]:
         except ValueError as error:
             raise SystemExit(f"Frame sheet cannot be read: {relative}: {error}") from error
         # Terminal rasters keep every other pose: Buddy at 10 FPS, Fika at 15 FPS.
-        count = EXPECTED_SEQUENCES[relative.stem][0] // (1 if relative.suffix == ".webp" else 2)
+        count = SHEET_POSES[relative.stem] // (1 if relative.suffix == ".webp" else 2)
         if len(poses) != count:
             raise SystemExit(f"Frame sheet {relative} holds {len(poses)} poses; expected {count}")
         paths.add(relative)

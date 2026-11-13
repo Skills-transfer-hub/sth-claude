@@ -6,6 +6,7 @@ losslessly; hooks/frame-sheets.ts holds the matching cell and rate constants.
 """
 
 import argparse
+import os
 import base64
 from pathlib import Path
 import struct
@@ -15,7 +16,7 @@ from buddy_terminal_codec import decode_packet, encode_packet
 from frame_sheets import raster_sheet
 
 
-STATES = ("ok", "work", "done", "error", "update", "noConfig")
+STATES = tuple(os.environ.get("BUDDY_STATES", "ok,work,done,error,update,noConfig").split(","))
 COLUMNS = 24
 ROWS = 12
 DEFAULT_COLOR = 0x01000000

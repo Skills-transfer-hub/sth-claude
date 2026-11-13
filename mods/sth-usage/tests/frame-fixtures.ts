@@ -5,9 +5,10 @@ import type { RasterPose } from '../hooks/frame-sheets'
  * through their fs.read stubs instead. Real sheets are checked against the
  * original poses by tools/test_directory_packaging.py.
  */
-const DESKTOP_COUNTS = { ok: 80, work: 48, done: 38, error: 30, update: 36, noConfig: 72, fika: 270 } as const
+const DESKTOP_COUNTS = { ok: 80, work: 48, done: 38, error: 30, update: 36, noConfig: 72, fika: 270, walk: 24, run: 12, jump: 20, sit: 40, sleep: 60 } as const
 const RASTER_COUNTS = { ok: 40, work: 24, done: 19, error: 15, update: 18, noConfig: 36, fika: 135 } as const
 export type FixtureSequence = keyof typeof DESKTOP_COUNTS
+type RasterSequence = keyof typeof RASTER_COUNTS
 const SIZE = 96
 
 function u32le(value: number): number[] { return [value & 255, value >>> 8 & 255, value >>> 16 & 255, value >>> 24 & 255] }
@@ -64,10 +65,10 @@ function rasterRgba(sequence: FixtureSequence, index: number): Uint8Array {
   return rgba
 }
 
-const raster = new Map<FixtureSequence, RasterPose[]>()
+const raster = new Map<RasterSequence, RasterPose[]>()
 /** The poses a terminal sheet must decode to. Keys differ from the plugin's, so
  * the raster cache can never hand a test the plugin's own result. */
-export function rasterFixture(sequence: FixtureSequence): RasterPose[] {
+export function rasterFixture(sequence: RasterSequence): RasterPose[] {
   let poses = raster.get(sequence)
   if (!poses) {
     poses = Array.from({ length: RASTER_COUNTS[sequence] }, (_, index) =>
@@ -99,7 +100,7 @@ function zlibStored(data: Uint8Array): number[] {
   return [...out, ...u32be((b << 16 | a) >>> 0)]
 }
 
-function pngSheet(sequence: FixtureSequence): string {
+function pngSheet(sequence: RasterSequence): string {
   const chunks = [pngChunk('IHDR', [...u32be(SIZE), ...u32be(SIZE), 8, 6, 0, 0, 0]), pngChunk('acTL', [...u32be(RASTER_COUNTS[sequence]), ...u32be(0)])]
   let order = 0
   rasterFixture(sequence).forEach((pose, index) => {
@@ -114,12 +115,12 @@ function pngSheet(sequence: FixtureSequence): string {
 const sheets = new Map<string, string>()
 /** The base64 contents of a frame sheet path the plugin reads, else undefined. */
 export function sheetFixture(path: string): string | undefined {
-  const match = /\/assets\/(desktop|terminal)\/(ok|work|done|error|update|noConfig|fika)\.(webp|png)$/.exec(path)
-  if (!match || (match[1] === 'desktop') !== (match[3] === 'webp')) return undefined
+  const match = /\/assets\/(desktop|terminal)\/(ok|work|done|error|update|noConfig|fika|walk|run|jump|sit|sleep)\.(webp|png)$/.exec(path)
+  if (!match || (match[1] === 'desktop') !== (match[3] === 'webp') || (match[1] === 'terminal' && !(match[2]! in RASTER_COUNTS))) return undefined
   let sheet = sheets.get(path)
   if (!sheet) {
     const sequence = match[2] as FixtureSequence
-    sheet = match[1] === 'desktop' ? webpSheet(sequence) : pngSheet(sequence)
+    sheet = match[1] === 'desktop' ? webpSheet(sequence) : pngSheet(sequence as RasterSequence)
     sheets.set(path, sheet)
   }
   return sheet

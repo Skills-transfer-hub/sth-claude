@@ -64,6 +64,25 @@ Variables facultatives : `BUDDY_STATES=error,work`, `BUDDY_SIZE=384`,
 `BUDDY_SAMPLES=64`, `BUDDY_PREVIEW=1` (une pose par état),
 `BUDDY_DEVICE=METAL` (CPU par défaut), `BUDDY_CWEBP=/chemin/vers/cwebp`.
 
+## Clips des pets
+
+`tools/author_pet_clips.py` ajoute au modèle cinq pistes NLA calculées image par image
+(marche, course, saut, assis, dodo), Buddy tourné de 60° vers la droite ; le panneau les
+retourne en miroir pour aller à gauche. Le dodo utilise le visage `-_-` et deux « z ».
+
+```sh
+B=/Applications/Blender.app/Contents/MacOS/Blender
+$B --background --factory-startup assets/model/buddy-v6.blend --python tools/author_pet_clips.py
+BUDDY_OUT=/tmp/sth-pets BUDDY_STATES=walk,run,jump,sit,sleep BUDDY_DEVICE=METAL $B --background \
+  --factory-startup assets/model/buddy-v6.blend --python tools/render_buddy_frames.py
+cd tools && export BUDDY_STATES=walk,run,jump,sit,sleep
+python3 encode_buddy_frames.py /tmp/sth-pets/frames ../assets/desktop
+```
+
+Seul le desktop utilise ces rendus, en feuilles WebP : ne lancez pas `encode_buddy_terminal.py`
+pour les pets. Le terminal dessine Buddy Pixel (`ui/pixel-buddy.ts`), dessiné à la main à la
+grille du terminal ; voir `design-system/guidelines/buddy-pixel.md`.
+
 ## Pause Fika V1
 
 La pause sélectionnée reprend l'animation V1 à 30 images par seconde pendant
