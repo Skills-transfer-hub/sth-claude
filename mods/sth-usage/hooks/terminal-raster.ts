@@ -1,51 +1,21 @@
+import type { RasterPose } from './frame-sheets'
+
 const DEFAULT_COLOR = 0x01000000
 const QUADRANTS = [0x20, 0x2598, 0x259d, 0x2580, 0x2596, 0x258c, 0x259e, 0x259b,
   0x2597, 0x259a, 0x2590, 0x259c, 0x2584, 0x2599, 0x259f, 0x2588] as const
 const cache = new Map<string, string>()
 
-function decode(packet: string) {
-  if (typeof packet !== 'string' || packet.length > 1_048_576 ||
-      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(packet)) {
-    throw new Error('Invalid Buddy packet base64')
-  }
-  const bytes = Uint8Array.from(atob(packet), character => character.charCodeAt(0))
-  if (bytes.length < 7 || bytes[0] !== 66 || bytes[1] !== 80 || bytes[2] !== 1) {
-    throw new Error('Invalid Buddy packet header')
-  }
-  const width = bytes[3]!
-  const height = bytes[4]! * 2
-  const count = bytes[5]!
-  const mode = bytes[6]!
-  if (!width || !height || !count || (mode !== 0 && mode !== 1)) throw new Error('Invalid Buddy packet dimensions, palette or mode')
-  const start = 7 + count * 3
-  if (bytes.length < start) throw new Error('Truncated Buddy palette')
-  const palette = new Uint32Array(count + 1)
-  palette[0] = DEFAULT_COLOR
-  for (let index = 1; index <= count; index += 1) {
-    const offset = 7 + (index - 1) * 3
-    palette[index] = (bytes[offset]! << 16) | (bytes[offset + 1]! << 8) | bytes[offset + 2]!
+/** A pose's colors: alpha 0 is transparent, any other alpha keeps the pixel's RGB. */
+function colors({ width, height, rgba }: RasterPose): Uint32Array {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || rgba.length !== width * height * 4) {
+    throw new Error('Invalid Buddy pose dimensions')
   }
   const pixels = new Uint32Array(width * height)
-  if (mode === 0) {
-    if (bytes.length - start !== pixels.length) throw new Error('Invalid Buddy raw pixel count')
-    for (let index = 0; index < pixels.length; index += 1) {
-      const value = bytes[start + index]!
-      if (value > count) throw new Error('Invalid Buddy palette index')
-      pixels[index] = palette[value]!
-    }
-  } else {
-    if ((bytes.length - start) % 2 !== 0) throw new Error('Truncated Buddy RLE pair')
-    let position = 0
-    for (let offset = start; offset < bytes.length; offset += 2) {
-      const run = bytes[offset]!
-      const value = bytes[offset + 1]!
-      if (!run || value > count || position + run > pixels.length) throw new Error('Invalid Buddy RLE run or index')
-      pixels.fill(palette[value]!, position, position + run)
-      position += run
-    }
-    if (position !== pixels.length) throw new Error('Invalid Buddy RLE pixel count')
+  for (let index = 0; index < pixels.length; index += 1) {
+    const offset = index * 4
+    pixels[index] = rgba[offset + 3] ? (rgba[offset]! << 16) | (rgba[offset + 1]! << 8) | rgba[offset + 2]! : DEFAULT_COLOR
   }
-  return { width, height, pixels }
+  return pixels
 }
 
 function sample(pixels: Uint32Array, width: number, height: number, targetWidth: number, targetHeight: number) {
@@ -119,18 +89,17 @@ function cell(colors: number[]): readonly [number, number, number] {
 }
 
 /** Decode source pixels before fitting them, keeping details in narrow panes. */
-export function terminalRaster(packet: string, columns: number, rows: number): string {
+export function terminalRaster(pose: RasterPose, columns: number, rows: number): string {
   if (!Number.isInteger(columns) || !Number.isInteger(rows) || columns < 1 || columns > 512 || rows < 1 || rows > 256) {
     throw new Error('Invalid Buddy raster dimensions')
   }
-  const key = `${columns}x${rows}:${packet}`
+  const key = `${columns}x${rows}:${pose.key}`
   const hit = cache.get(key)
   if (hit !== undefined) {
     cache.delete(key); cache.set(key, hit)
     return hit
   }
-  const source = decode(packet)
-  const pixels = sample(source.pixels, source.width, source.height, columns * 2, rows * 2)
+  const pixels = sample(colors(pose), pose.width, pose.height, columns * 2, rows * 2)
   const bytes = new Uint8Array(columns * rows * 12)
   const view = new DataView(bytes.buffer)
   for (let row = 0; row < rows; row += 1) {

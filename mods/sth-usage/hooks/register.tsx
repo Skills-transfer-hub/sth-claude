@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderInput, Timer } from 'claude-code'
+import type { EngineInterface, FsBytes, Register, RenderInput, Timer } from 'claude-code'
 import { isPromptText, isUserPrompt } from './fika'
 import { terminalRaster } from './terminal-raster'
 import { EMPTY_CONTEXT, registerContext, statusPills, usagePillElement } from './context'
@@ -7,16 +7,15 @@ import { activityCaption, activityBuddyState, registerActivity } from './activit
 import { EMPTY_PROJECT, rankSkills, registerProject } from './project'
 import { panelChrome, paneNavigation } from './presentation'
 import { PLUGIN_VERSION } from './version'
-import { createBuddyImageReader } from './buddy-images'
+import { COUNTS as HD_FRAME_COUNTS, createBuddyImageReader } from './buddy-images'
+import type { Sequence } from './buddy-images'
 import { prepareBuddyAssets } from './buddy-assets'
-import terminalOk from '../ui/terminal-frames/ok'
-import terminalWork from '../ui/terminal-frames/work'
-import terminalDone from '../ui/terminal-frames/done'
-import terminalError from '../ui/terminal-frames/error'
-import terminalUpdate from '../ui/terminal-frames/update'
-import terminalNoConfig from '../ui/terminal-frames/noConfig'
-import { COLUMNS as BUDDY_COLUMNS, ROWS as BUDDY_ROWS, FPS as TERMINAL_BUDDY_FPS } from '../ui/terminal-frames/settings'
-import terminalFika, { DURATION_MS as FIKA_DURATION_MS, FPS as FIKA_RASTER_FPS, COLUMNS as FIKA_COLUMNS, ROWS as FIKA_ROWS } from '../ui/terminal-frames/fika/index'
+import { fromBase64 } from './buddy-codec'
+import {
+  FIKA_DURATION_MS, FIKA_RASTER_FPS, RASTER_COLUMNS as BUDDY_COLUMNS, RASTER_COLUMNS as FIKA_COLUMNS,
+  RASTER_FPS as TERMINAL_BUDDY_FPS, RASTER_ROWS as BUDDY_ROWS, RASTER_ROWS as FIKA_ROWS, rasterPose, rasterSheet, webpPoses,
+} from './frame-sheets'
+import type { RasterSheet } from './frame-sheets'
 
 import type {
   CatalogSkill,
@@ -306,10 +305,12 @@ const terminalBuddies = new Map<string, TerminalBuddy>()
 const imageFallbacks = new Set<string>()
 let imageTerminal: boolean | null = null
 let buddyAnimation: Timer | undefined
-const terminalFrames = {
-  ok: terminalOk, work: terminalWork, done: terminalDone,
-  error: terminalError, update: terminalUpdate, noConfig: terminalNoConfig,
-}
+const rasterSheets = new Map<Sequence, Promise<RasterSheet>>()
+const desktopSheets = new Map<Sequence, Promise<string[]>>()
+// The Client each pane drew last; its pose requests must come from that Client.
+const desktopClients = new Map<string, { key: string; sequence: Sequence; props: object }>()
+// Client props hold at most 100,000 characters; poses stream in batches below that.
+const POSE_BATCH_CHARS = 90_000
 let buddyTick = 0
 let queuedFika = false
 let imageProtocolConfirmed = false
@@ -359,7 +360,7 @@ function startBuddyAssetPreparation($: EngineInterface): void {
         let timeout: Timer | undefined
         try {
           return await Promise.race([
-            $.http.fetch(url),
+            $.http.fetch(url, { method: 'GET' }),
             new Promise<never>((resolveTimeout, reject) => {
               timeout = $.clock.after(30_000, () => { reject(new Error('Buddy asset download timed out')) })
             }),
@@ -392,9 +393,49 @@ function startBuddyAssetPreparation($: EngineInterface): void {
   }).finally(() => { assetTask = undefined })
 }
 
-function buddyCells(state: BuddyState, tick: number): string {
-  const frames = terminalFrames[state]
-  return frames[Math.floor(tick * BUDDY_FRAME_MS * TERMINAL_BUDDY_FPS / 1000) % frames.length]!
+// Each sheet's path is fixed text at its read, so every file the mod opens is named.
+function readRasterSheet($: EngineInterface, sequence: Sequence): Promise<FsBytes> {
+  switch (sequence) {
+    case 'ok': return $.fs.read(`${$.plugin.root}/assets/terminal/ok.png`, { as: 'bytes' })
+    case 'work': return $.fs.read(`${$.plugin.root}/assets/terminal/work.png`, { as: 'bytes' })
+    case 'done': return $.fs.read(`${$.plugin.root}/assets/terminal/done.png`, { as: 'bytes' })
+    case 'error': return $.fs.read(`${$.plugin.root}/assets/terminal/error.png`, { as: 'bytes' })
+    case 'update': return $.fs.read(`${$.plugin.root}/assets/terminal/update.png`, { as: 'bytes' })
+    case 'noConfig': return $.fs.read(`${$.plugin.root}/assets/terminal/noConfig.png`, { as: 'bytes' })
+    case 'fika': return $.fs.read(`${$.plugin.root}/assets/terminal/fika.png`, { as: 'bytes' })
+  }
+}
+
+function readDesktopSheet($: EngineInterface, sequence: Sequence): Promise<FsBytes> {
+  switch (sequence) {
+    case 'ok': return $.fs.read(`${$.plugin.root}/assets/desktop/ok.webp`, { as: 'bytes' })
+    case 'work': return $.fs.read(`${$.plugin.root}/assets/desktop/work.webp`, { as: 'bytes' })
+    case 'done': return $.fs.read(`${$.plugin.root}/assets/desktop/done.webp`, { as: 'bytes' })
+    case 'error': return $.fs.read(`${$.plugin.root}/assets/desktop/error.webp`, { as: 'bytes' })
+    case 'update': return $.fs.read(`${$.plugin.root}/assets/desktop/update.webp`, { as: 'bytes' })
+    case 'noConfig': return $.fs.read(`${$.plugin.root}/assets/desktop/noConfig.webp`, { as: 'bytes' })
+    case 'fika': return $.fs.read(`${$.plugin.root}/assets/desktop/fika.webp`, { as: 'bytes' })
+  }
+}
+
+// Sheets are read once per load; a failed read stays failed until the mod reloads.
+function sheet<T>(cache: Map<Sequence, Promise<T>>, sequence: Sequence, load: () => Promise<T>): Promise<T> {
+  let entry = cache.get(sequence)
+  if (!entry) cache.set(sequence, entry = load())
+  return entry
+}
+
+function desktopPoses($: EngineInterface, sequence: Sequence): Promise<string[]> {
+  return sheet(desktopSheets, sequence, async () => webpPoses(fromBase64((await readDesktopSheet($, sequence)).base64)))
+}
+
+async function rasterCells($: EngineInterface, sequence: Sequence, frame: number, columns: number, rows: number): Promise<string> {
+  const poses = await sheet(rasterSheets, sequence, async () => rasterSheet(fromBase64((await readRasterSheet($, sequence)).base64), sequence))
+  // Buddy loops at the raster rate; Fika follows its HD clock and holds its last pose.
+  const index = sequence === 'fika'
+    ? Math.min(poses.frames.length - 1, Math.floor(frame * FIKA_RASTER_FPS / FIKA_HD_FPS))
+    : Math.floor(frame * BUDDY_FRAME_MS * TERMINAL_BUDDY_FPS / 1000) % poses.frames.length
+  return terminalRaster(rasterPose(poses, index), columns, rows)
 }
 
 async function terminalHasImages($: EngineInterface): Promise<boolean> {
@@ -478,9 +519,13 @@ function blitBuddy($: EngineInterface, requestId: string, entry: TerminalBuddy, 
       })
       .finally(() => { entry.blitting = false })
   } else {
-    const cells = fika ? terminalFika[Math.min(terminalFika.length - 1, Math.floor(frame * FIKA_RASTER_FPS / FIKA_HD_FPS))]! : buddyCells(entry.state, frame)
-    void $.ui.blit({ requestId, key: entry.key, cells: terminalRaster(cells, entry.columns, entry.rows), columns: entry.columns, rows: entry.rows })
-      .then(result => terminalBlitResult($, requestId, entry, result.deny))
+    void rasterCells($, fika ? 'fika' : entry.state, frame, entry.columns, entry.rows)
+      .then(async cells => {
+        if (terminalBuddies.get(requestId) !== entry) return
+        const result = await $.ui.blit({ requestId, key: entry.key, cells, columns: entry.columns, rows: entry.rows })
+        terminalBlitResult($, requestId, entry, result.deny)
+      })
+      .catch(error => $.ui.log(`Buddy raster pose failed: ${String(error)}`, { to: 'debug' }))
   }
 }
 
@@ -547,20 +592,23 @@ async function buddyElement(
       $.clock.after(0, () => blitBuddy($, requestId, entry, fikaFrame ?? buddyTick))
       return <Image key={key} source={source} columns={size.columns} rows={size.rows} alt={caption} />
     }
-    return (
-      <Raster
-        key={key}
-        cells={terminalRaster(fikaFrame === null ? buddyCells(state, buddyTick) : terminalFika[Math.floor(fikaFrame * FIKA_RASTER_FPS / FIKA_HD_FPS)]!, size.columns, size.rows)}
-        columns={size.columns}
-        rows={size.rows}
-      />
-    )
+    let cells: string
+    try { cells = await rasterCells($, fikaFrame === null ? state : 'fika', fikaFrame ?? buddyTick, size.columns, size.rows) }
+    catch (error) {
+      $.ui.log(`Buddy raster pose failed: ${String(error)}`, { to: 'debug' })
+      return <Text key="buddy-caption">{caption}</Text>
+    }
+    return <Raster key={key} cells={cells} columns={size.columns} rows={size.rows} />
   }
   if (e.surface === 'desktop') {
     if (fikaFrame !== null) {
-      return $.ui.resolve(e).Client({ module: '../ui/fika.ts', key: `buddy-fika-scene-${fikaStartedAt}`, props: { startFrame: fikaFrame, caption } })
+      const props = { startFrame: fikaFrame, caption, count: FIKA_HD_FRAME_COUNT }
+      desktopClients.set(requestId, { key: `buddy-fika-scene-${fikaStartedAt}`, sequence: 'fika', props })
+      return $.ui.resolve(e).Client({ module: '../ui/fika.ts', key: `buddy-fika-scene-${fikaStartedAt}`, props })
     }
-    return $.ui.resolve(e).Client({ module: '../ui/buddy.ts', key: `buddy-${state}`, props: { state, caption } })
+    const props = { state, caption, count: HD_FRAME_COUNTS[state] }
+    desktopClients.set(requestId, { key: `buddy-${state}`, sequence: state, props })
+    return $.ui.resolve(e).Client({ module: '../ui/buddy.ts', key: `buddy-${state}`, props })
   }
   const { Text } = $.ui.resolve(e)
   return <Text>{caption}</Text>
@@ -1069,6 +1117,22 @@ export const register: Register = on => {
     await closeOtherPanes($, targets[e.element]!)
     return next(e)
   })
+  // A desktop Buddy asks for the poses it lacks: answer one batch from its sheet.
+  on('ui.message', { module: /^ui\/(?:buddy|fika)\.ts$/ }, async ($, e) => {
+    const client = desktopClients.get(e.requestId)
+    const data = e.data as { sequence?: unknown; first?: unknown } | null
+    if (!client || client.key !== e.element || data?.sequence !== client.sequence || !Number.isInteger(data.first)) return {}
+    const poses = await desktopPoses($, client.sequence).catch((error: unknown) => {
+      $.ui.log(`Buddy desktop poses failed: ${String(error)}`, { to: 'debug' })
+      return []
+    })
+    const first = data.first as number, batch: string[] = []
+    for (let index = first, size = 0; index >= 0 && index < poses.length && (!batch.length || size + poses[index]!.length <= POSE_BATCH_CHARS); index += 1) {
+      batch.push(poses[index]!)
+      size += poses[index]!.length
+    }
+    return batch.length ? { props: { ...client.props, batch: { sequence: client.sequence, first, poses: batch } } } : {}
+  })
 
   on('session.start', async ($, e, next) => {
     await startFika($)
@@ -1111,7 +1175,8 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
-    await update($, isWorking, () => true)
+    // Engines after 2.1.289 raise turn.start for a subagent's run too; turn.complete clears only the main loop's.
+    if (e.agentId === undefined) await update($, isWorking, () => true)
 
     return next(e)
   })
