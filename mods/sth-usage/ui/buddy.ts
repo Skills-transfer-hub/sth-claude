@@ -1,34 +1,21 @@
 import type { ClientModule } from 'claude-code'
+import { askForPoses, poseAt, poseSvg, posesFor } from './frame-stream'
+import type { PoseBatch } from './frame-stream'
 
-import ok from './frames/ok'
-import work from './frames/work'
-import done from './frames/done'
-import error from './frames/error'
-import update from './frames/update'
-import noConfig from './frames/noConfig'
+type BuddyProps = { state: string; caption: string; count: number; batch?: PoseBatch }
 
-const frames = { ok, work, done, error, update, noConfig }
-type BuddyProps = { state: keyof typeof frames; caption: string }
-
-// One local clock, one HD pose at a time. The pane only sends state and caption.
+// One local clock, one HD pose at a time. The pane sends the state and caption;
+// the hooks module answers this module's requests with the state's poses.
 const Buddy: ClientModule<BuddyProps, number> = (props, surface) => {
   if (surface.state === undefined) {
     surface.setState(0)
     surface.every(50, () => surface.setState((surface.state ?? 0) + 1))
   }
-  const poses = frames[props.state]
-  const pose = poses[(surface.state ?? 0) % poses.length]!
-  return {
-    type: 'Svg',
-    props: {
-      source: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 384" width="144" height="144">' +
-        `<image href="data:image/webp;base64,${pose}" width="384" height="384"/></svg>`,
-      alt: props.caption,
-      width: 144,
-      height: 144,
-      isInteractive: false,
-    },
-  }
+  const tick = surface.state ?? 0
+  const frame = tick % props.count
+  const poses = posesFor(props.state, props.batch)
+  askForPoses(data => surface.post(data), props.state, poses, frame, props.count, true, tick)
+  return poseSvg(poseAt(poses, frame), props.caption)
 }
 
 export default Buddy

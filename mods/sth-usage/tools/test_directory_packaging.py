@@ -5,9 +5,13 @@ Run with the same Python environment as build_directory_bundle.py:
 """
 from __future__ import annotations
 
+import base64
 import copy
 import json
 from pathlib import Path
+import re
+import shutil
+import struct
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -17,6 +21,10 @@ import zipfile
 from PIL import Image
 
 import build_directory_bundle as build
+from buddy_terminal_codec import DEFAULT_COLOR, pixel_cells
+import encode_buddy_terminal as terminal
+import encode_fika_frames as fika
+import frame_sheets
 import stage_directory_release as stage
 
 
@@ -56,6 +64,8 @@ class HostedPackagingTests(unittest.TestCase):
     def test_hosted_bundle_contains_only_manifest_and_exact_initial_poses(self) -> None:
         receipt = self.externalize()
         self.assertEqual(list(self.data.rglob("*.json")), [self.data / "remote.json"])
+        # The directory reads a single long line as an opaque asset.
+        self.assertLess(max(map(len, (self.data / "remote.json").read_text().splitlines())), 200)
         expected = stage.validate_asset_tree(self.repo, self.bundle, receipt)
         actual = {path.relative_to(self.bundle) for path in (self.bundle / "assets").rglob("*") if path.is_file()}
         self.assertEqual(actual, expected)
@@ -261,6 +271,43 @@ class ReviewableFileTests(unittest.TestCase):
                 build.validate_reviewable_files(self.root)
         script.write_text("export const readable = true\n")
         build.validate_reviewable_files(self.root)
+
+
+class ShippedFrameSheetTests(unittest.TestCase):
+    """The committed sheets, read the way the hooks module and the stager read them."""
+    repo = Path(__file__).resolve().parents[3]
+    mod = repo / "mods/sth-usage"
+
+    def test_sheets_stage_complete_and_follow_the_hooks_constants(self) -> None:
+        constants = {name: int(value.replace("_", "")) for name, value in
+                     re.findall(r"export const ([A-Z_]+) = ([\d_]+)\b", (self.mod / "hooks/frame-sheets.ts").read_text())}
+        self.assertEqual((constants["RASTER_COLUMNS"], constants["RASTER_ROWS"], constants["RASTER_FPS"], constants["RASTER_SIZE"]),
+                         (terminal.MAIN_COLUMNS, terminal.MAIN_ROWS, terminal.MAIN_FPS, frame_sheets.RASTER_SIZE))
+        self.assertEqual((constants["FIKA_RASTER_FPS"], constants["FIKA_DURATION_MS"]), (fika.TERMINAL_FPS, fika.DURATION_MS))
+        with tempfile.TemporaryDirectory(prefix="sth-frame-sheets-test-") as folder:
+            bundle = Path(folder)
+            for name in build.FRAME_SHEETS:
+                (bundle / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(self.mod / name, bundle / name)
+            self.assertEqual(stage.validate_frame_sheets(self.repo, bundle), {Path(name) for name in build.FRAME_SHEETS})
+            changed = bytearray((bundle / "assets/desktop/ok.webp").read_bytes())
+            changed[-1] ^= 1
+            (bundle / "assets/desktop/ok.webp").write_bytes(changed)
+            with self.assertRaisesRegex(SystemExit, "differs from the source commit"):
+                stage.validate_frame_sheets(self.repo, bundle)
+
+    def test_the_body_remains_visible_against_a_dark_terminal_background(self) -> None:
+        # The fitted cells a terminal receives for Buddy's first portable pose.
+        pose = frame_sheets.raster_frames((self.mod / "assets/terminal/noConfig.png").read_bytes())[0]
+        cells = base64.b64decode(pixel_cells(frame_sheets.RASTER_SIZE, frame_sheets.RASTER_SIZE, pose, terminal.MAIN_COLUMNS, terminal.MAIN_ROWS))
+        words = struct.unpack(f"<{len(cells) // 4}I", cells)
+        colors = {word for index, word in enumerate(words) if index % 3}
+        luminance = sorted((color >> 16 & 255) * 0.2126 + (color >> 8 & 255) * 0.7152 + (color & 255) * 0.0722
+                           for index, color in enumerate(words) if index % 3 and color != DEFAULT_COLOR)
+        self.assertGreater(sum(word != 0x20 for word in words[::3]), 100)
+        self.assertIn(DEFAULT_COLOR, colors)
+        self.assertGreater(luminance[len(luminance) // 2], 75)
+        self.assertGreater(luminance[len(luminance) // 4], 65)
 
 
 if __name__ == "__main__":

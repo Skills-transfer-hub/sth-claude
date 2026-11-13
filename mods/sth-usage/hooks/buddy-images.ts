@@ -2,8 +2,8 @@ import type { ImageSource } from 'claude-code'
 import { makeDecoder, toBase64 } from './buddy-codec'
 import type { Packet } from './buddy-codec'
 
-type Sequence = 'ok' | 'work' | 'done' | 'error' | 'update' | 'noConfig' | 'fika'
-const COUNTS: Record<Sequence, number> = { ok: 80, work: 48, done: 38, error: 30, update: 36, noConfig: 72, fika: 270 }
+export type Sequence = 'ok' | 'work' | 'done' | 'error' | 'update' | 'noConfig' | 'fika'
+export const COUNTS: Record<Sequence, number> = { ok: 80, work: 48, done: 38, error: 30, update: 36, noConfig: 72, fika: 270 }
 const CHUNK_SIZE = 6
 const KEYFRAME_INTERVAL = 30
 type ReadFile = (path: string) => Promise<string>

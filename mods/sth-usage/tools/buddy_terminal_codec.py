@@ -175,10 +175,14 @@ def _cell(colors):
 
 
 def terminal_cells(packet, columns, rows):
+    """Mirror hooks/terminal-raster.ts for a BP1 packet."""
+    return pixel_cells(*decode_packet(packet), columns, rows)
+
+
+def pixel_cells(width, height, source, columns, rows):
     """Mirror hooks/terminal-raster.ts, including JS rounding and four iterations."""
     if not isinstance(columns, int) or not isinstance(rows, int) or not 1 <= columns <= 512 or not 1 <= rows <= 256:
         raise ValueError("Invalid Buddy raster dimensions")
-    width, height, source = decode_packet(packet)
     pixels = _sample(source, width, height, columns * 2, rows * 2)
     words = []
     for row in range(rows):

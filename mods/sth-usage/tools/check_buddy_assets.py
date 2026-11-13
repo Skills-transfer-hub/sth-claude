@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Check Buddy's HD poses, client data modules and runtime size budgets."""
+"""Check Buddy's HD poses, their desktop frame sheets and the UI source budget."""
 
 import argparse
 import base64
 import json
 from pathlib import Path
-import re
 import struct
 import sys
 
+from frame_sheets import webp_frames
+
 
 SIZE = 384
-CHUNK_FRAMES = 12
 MAX_RENDER_CHARS = 100_000
 MAX_MODULE_BYTES = 1_048_576
 MAX_GRAPH_BYTES = 8_388_608
@@ -83,46 +83,6 @@ def frame_svg(encoded):
     )
 
 
-def load_frame_module(path, ui_root, chunk=False):
-    """Read the codec's JSON exports or its simple index, without executing JS."""
-    path = path.resolve()
-    if not path.is_relative_to(ui_root):
-        raise ValueError(f"Frame import leaves the UI folder: {path}")
-    source = path.read_text(encoding="utf-8").strip()
-    direct = re.fullmatch(r"export default\s+(\[.*\]);", source, re.DOTALL)
-    if direct:
-        frames = json.loads(direct[1])
-        if not isinstance(frames, list) or not all(isinstance(frame, str) for frame in frames):
-            raise ValueError(f"{path.name}: expected an array of base64 strings")
-        return frames, {path}
-    if chunk:
-        raise ValueError(f"{path.name}: expected a JSON frame chunk")
-    lines = source.splitlines()
-    if len(lines) < 2:
-        raise ValueError(f"{path.name}: unrecognized frame module")
-    imports = []
-    for index, line in enumerate(lines[:-1]):
-        match = re.fullmatch(r"import (block\d+) from '([^']+)';", line)
-        if not match or match[1] != f"block{index}":
-            raise ValueError(f"{path.name}: invalid frame chunk import")
-        expected = f"./{path.stem}/{index:03d}"
-        if match[2] not in (expected, expected + ".ts"):
-            raise ValueError(f"{path.name}: expected contiguous chunk {expected}")
-        imported = path.parent / match[2]
-        imports.append(imported if imported.suffix else imported.with_suffix(".ts"))
-    expression = ",".join(f"...block{index}" for index in range(len(imports)))
-    if lines[-1] != f"export default [{expression}];":
-        raise ValueError(f"{path.name}: invalid frame chunk order")
-    frames, modules = [], {path}
-    for index, imported in enumerate(imports):
-        poses, loaded = load_frame_module(imported, ui_root, chunk=True)
-        if not 1 <= len(poses) <= CHUNK_FRAMES or (index < len(imports) - 1 and len(poses) != CHUNK_FRAMES):
-            raise ValueError(f"{imported.name}: expected chunks of {CHUNK_FRAMES} poses, with a partial final chunk")
-        frames.extend(poses)
-        modules.update(loaded)
-    return frames, modules
-
-
 def check_ui_budget(ui_root):
     # All UI source files is a conservative bound for the Client's import graph.
     extensions = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
@@ -153,12 +113,12 @@ def check_state(root, ui_root, state):
         raise ValueError(f"Expected {frames} numbered PNG frames; found {len(actual)} (missing {sorted(expected - actual)[:4]}, extra {sorted(actual - expected)[:4]})")
     for name in sorted(expected):
         check_png(folder / name)
-    poses, modules = load_frame_module(ui_root / "frames" / f"{state}.ts", ui_root)
+    poses = webp_frames((root / "desktop" / f"{state}.webp").read_bytes())
     if len(poses) != frames:
-        raise ValueError(f"Expected {frames} WebP poses in the TS data, found {len(poses)}")
+        raise ValueError(f"Expected {frames} WebP poses in desktop/{state}.webp, found {len(poses)}")
     sizes, svg_sizes, render_sizes = [], [], []
-    for index, encoded in enumerate(poses):
-        data = base64.b64decode(encoded, validate=True)
+    for index, data in enumerate(poses):
+        encoded = base64.b64encode(data).decode("ascii")
         dimensions, alpha = webp_info(data)
         if dimensions != (SIZE, SIZE):
             raise ValueError(f"Pose {index:03d}: expected WebP {SIZE}x{SIZE}, got {dimensions[0]}x{dimensions[1]}")
@@ -176,7 +136,7 @@ def check_state(root, ui_root, state):
         render_sizes.append(render_chars)
     return {
         "state": state, "frames": frames, "frame_size": [SIZE, SIZE],
-        "fps": 20, "seconds": duration, "modules": len(modules), "alpha": True,
+        "fps": 20, "seconds": duration, "sheet": f"desktop/{state}.webp", "alpha": True,
         "webp_bytes_total": sum(sizes), "webp_bytes_max": max(sizes),
         "svg_chars_max": max(svg_sizes), "client_json_chars_max": max(render_sizes),
     }
@@ -184,7 +144,7 @@ def check_state(root, ui_root, state):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("assets", type=Path, help="Asset folder containing frames/state/000.png")
+    parser.add_argument("assets", type=Path, help="Asset folder containing frames/state/000.png and desktop/state.webp")
     parser.add_argument("--ui", type=Path, help="UI folder (default: assets.parent/ui)")
     args = parser.parse_args()
     root = args.assets.resolve()
