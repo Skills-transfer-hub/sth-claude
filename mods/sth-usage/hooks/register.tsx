@@ -1175,7 +1175,8 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
-    await update($, isWorking, () => true)
+    // Engines after 2.1.289 raise turn.start for a subagent's run too; turn.complete clears only the main loop's.
+    if (e.agentId === undefined) await update($, isWorking, () => true)
 
     return next(e)
   })
