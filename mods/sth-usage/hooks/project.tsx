@@ -386,7 +386,9 @@ export function doctorSummary(view: ProjectView): string {
 
 export function registerProject(on: On): void {
   on('session.start', { isInteractive: [true, false] }, async ($, e, next) => {
+    // Another plugin (the STH plugin's /sth:sth-doctor) may own the name: Buddy still starts.
     await $.command.register({ name: 'sth-doctor', description: 'Project, STH and MCP tool diagnostics; tests are not run' })
+      .catch((error: unknown) => $.ui.log(`Buddy /sth-doctor not registered: ${String(error)}`, { to: 'debug' }))
     void refreshProject($, false)
     return next(e)
   })

@@ -15,7 +15,7 @@ import tempfile
 from frame_sheets import webp_sheet
 
 
-STATES = ("ok", "work", "done", "error", "update", "noConfig")
+STATES = tuple(os.environ.get("BUDDY_STATES", "ok,work,done,error,update,noConfig").split(","))
 QUALITY = 95
 MAX_IMAGE_BYTES = 70_000
 FRAME_MS = 50

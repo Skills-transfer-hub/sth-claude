@@ -500,6 +500,8 @@ function stubEnvironment(on: On, isLinked: boolean, variables: Readonly<Record<s
   const values = new Map<string, unknown>([['skills', skillsView(isLinked)]])
   const clock = mock.clock(on, { now: 1_800_000_000_000 })
   fixtureClock = clock
+  // These suites cover the classic HD Buddy; tests/pet.test.ts covers the default pet strip.
+  mock.store(on, { homeView: 'classic' })
   const imagesSupported = /ghostty/i.test(variables.TERM_PROGRAM ?? '') || /kitty/i.test(variables.TERM ?? '') || variables.MOCK_IMAGE_SUPPORT === '1'
   let respondToBlit = (e: UiBlitArgs): Promise<{ deny?: string }> | { deny?: string } =>
     'source' in e && (imageDenial || !imagesSupported)

@@ -3,7 +3,10 @@ from mathutils import Vector
 
 OUT = os.environ["BUDDY_OUT"]
 CLIPS = {"ok": ("idle", 4.0), "work": ("work", 2.4), "done": ("done", 1.9),
-         "error": ("error", 1.5), "update": ("update", 1.8), "noConfig": ("noConfig", 3.6)}
+         "error": ("error", 1.5), "update": ("update", 1.8), "noConfig": ("noConfig", 3.6),
+         # Pet clips, authored by tools/author_pet_clips.py.
+         "walk": ("walk", 1.2), "run": ("run", 0.6), "jump": ("jump", 1.0), "sit": ("sit", 2.0), "sleep": ("sleep", 3.0)}
+FACES = {"walk": "ok", "run": "work", "jump": "done", "sit": "ok"}
 SOURCE_FPS = 30
 FRAME_FPS = 20
 SIZE = int(os.environ.get("BUDDY_SIZE", "384"))
@@ -45,6 +48,7 @@ scene.camera.data.ortho_scale = 3.8
 
 animated = [obj for obj in bpy.data.objects if obj.animation_data and obj.animation_data.nla_tracks]
 faces = [obj for obj in bpy.data.objects if "canonical face" in obj.name]
+sleep_letters = [obj for obj in bpy.data.objects if obj.get("state") == "sleep-z"]
 
 for state, (clip, seconds) in CLIPS.items():
     if state not in STATES:
@@ -54,9 +58,11 @@ for state, (clip, seconds) in CLIPS.items():
         obj.animation_data.use_nla = True
         for track in obj.animation_data.nla_tracks:
             track.mute = track.name != clip
+    for letter in sleep_letters:
+        letter.hide_render = state != "sleep"
     for face in faces:
-        face.hide_render = face.get("state") != state
-        if face.get("state") == state:
+        face.hide_render = face.get("state") != FACES.get(state, state)
+        if not face.hide_render:
             face.data.materials[0] = bpy.data.materials["STH · pale typography"]
     directory = os.path.join(OUT, "frames", state)
     os.makedirs(directory, exist_ok=True)

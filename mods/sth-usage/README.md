@@ -56,7 +56,7 @@ The module reloads on every save in a session that has loaded it. Desktop sessio
 
 ## Usage
 
-The interface lives in the right panel. The home screen keeps Buddy, followed by a single navigation row: STH, Summary and More (Context, Diagnostics and Resume). The STH page manages installed skills and the catalog. More expands three navigation buttons. Other screens provide a single Home button. Navigation replaces the current panel instead of stacking another panel on top. The mod does not add a strip above the message field.
+The interface lives in the right panel. The home screen opens on Buddy's pet strip, followed by a single navigation row: STH, Summary and More (Context, Diagnostics and Resume). The STH page manages installed skills and the catalog. More expands three navigation buttons. Other screens provide a single Home button. Navigation replaces the current panel instead of stacking another panel on top. The mod does not add a strip above the message field.
 
 The Usage card shows each metric once: quotas and reset times, context, observed tokens, cost and agents. Pills follow the STH design system's neutral tokens: thin outlines, Inter labels and JetBrains Mono SVG values. Native controls keep the fonts and dimensions imposed by Claude; terminal buttons have neutral outlines. Red is reserved for errors.
 
@@ -70,6 +70,10 @@ Desktop pill details appear on hover. The countdown redraws every 30 seconds wit
 | STH or `/sth-skills` | Installed skills, versions and updates; catalog recommendations based on project manifests. |
 | `/sth-doctor` | Stack, available binaries, test commands, STH configuration and observed MCP tool status. Diagnostics do not run tests. |
 | More → Resume or `/sth-resume` | Goal, files, checks and next step from the previous session. Inspect the summary before explicitly adding it to the draft; it is not sent automatically. |
+
+### Pets
+
+On Home, Buddy lives in a strip like a desk pet: it wanders, sits, and falls asleep after two idle minutes. It runs while Claude works, jumps when a turn ends, waits in place for a permission and shows an error after a failed turn. Quota levels stay in the caption and do not freeze it. Click a Buddy to pet it (a heart and a jump) or click the floor to drop a ball that the nearest Buddy chases; **Throw ball** does the same from the keyboard. **+ Pet** adds up to three Buddies in graphite, chalk or steel (neutral greys, per the STH design system); the list is kept between sessions. **Classic Buddy** returns to the single HD Buddy (and **Pets** comes back); the choice is kept too. Desktop draws the Buddy 3D poses. The terminal draws **Buddy Pixel**, a pixel-art Buddy drawn at the terminal's own grid: each pixel is half a cell (`▀`/`▄`), so it shows exactly as drawn, in any terminal with true colour. Clicks reach the strip in terminals that report the mouse. Fika still plays its own scene.
 
 Buddy distinguishes work in progress, pending permission, errors, completed turns and interruptions. A main turn lasting at least 60 seconds triggers a discreet notification in Claude.
 
