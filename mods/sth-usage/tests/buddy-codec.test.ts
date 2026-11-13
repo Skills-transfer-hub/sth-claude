@@ -72,11 +72,11 @@ describe('Lossless Buddy frame decoding', () => {
     for (const frame of packet.frames) {
       const decoded = decoder.decode(packet, frame)
       expect(decoded.length).toBe(384 * 384 * 4)
-      expect(decoder.cachedBytes).toBe(384 * 384 * 4)
+      expect(decoder.cachedBytes()).toBe(384 * 384 * 4)
     }
     expect(() => decoder.decode(packet, packet.frames[2]!)).toThrow('Missing delta predecessor')
     decoder.reset()
-    expect(decoder.cachedBytes).toBe(0)
+    expect(decoder.cachedBytes()).toBe(0)
     expect(() => decoder.decode(packet, packet.frames[1]!)).toThrow('Missing delta predecessor')
   })
 

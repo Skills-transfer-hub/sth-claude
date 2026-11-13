@@ -54,6 +54,7 @@ export function makeDecoder() {
       return previous!
     },
     reset() { previous = null; sequence = ''; frameNumber = -1; width = 0; height = 0 },
-    get cachedBytes() { return previous?.byteLength ?? 0 },
+    // A plain method: the directory refuses accessors that run code when read.
+    cachedBytes() { return previous?.byteLength ?? 0 },
   }
 }

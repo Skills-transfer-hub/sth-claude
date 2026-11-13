@@ -1,29 +1,25 @@
 import type { ClientModule } from 'claude-code'
-import frames, { FPS } from './frames/fika/index'
+import { askForPoses, poseAt, poseSvg, posesFor } from './frame-stream'
+import type { PoseBatch } from './frame-stream'
 
-type FikaProps = { startFrame: number; caption: string }
+const FPS = 30
+
+type FikaProps = { startFrame: number; caption: string; count: number; batch?: PoseBatch }
 // The hook owns eligibility and the nine-second lifetime; this clock draws locally.
 const Fika: ClientModule<FikaProps, number> = (props, surface) => {
   if (surface.state === undefined) {
-    surface.setState(Math.min(frames.length - 1, Math.max(0, props.startFrame)))
+    const last = props.count - 1
+    surface.setState(Math.min(last, Math.max(0, props.startFrame)))
     const stop = surface.every(1000 / FPS, () => {
-      const frame = Math.min(frames.length - 1, (surface.state ?? 0) + 1)
+      const frame = Math.min(last, (surface.state ?? 0) + 1)
       surface.setState(frame)
-      if (frame === frames.length - 1) stop()
+      if (frame === last) stop()
     })
   }
-  const pose = frames[surface.state ?? props.startFrame]!
-  return {
-    type: 'Svg',
-    props: {
-      source: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 384" width="144" height="144">' +
-        `<image href="data:image/webp;base64,${pose}" width="384" height="384"/></svg>`,
-      alt: props.caption,
-      width: 144,
-      height: 144,
-      isInteractive: false,
-    },
-  }
+  const frame = surface.state ?? props.startFrame
+  const poses = posesFor('fika', props.batch)
+  askForPoses(data => surface.post(data), 'fika', poses, frame, props.count, false, frame)
+  return poseSvg(poseAt(poses, frame), props.caption)
 }
 
 export default Fika

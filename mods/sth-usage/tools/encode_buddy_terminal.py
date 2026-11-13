@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Encode Buddy's PNG poses as BP1 palette/RLE packets for terminal quadrants."""
+"""Encode Buddy's PNG poses as animated PNG raster sheets (assets/terminal/<state>.png).
+
+Poses are cropped, scaled and palette-quantized through the BP1 codec, then stored
+losslessly; hooks/frame-sheets.ts holds the matching cell and rate constants.
+"""
 
 import argparse
 import base64
-import json
 from pathlib import Path
 import struct
 
 from PIL import Image
-from buddy_terminal_codec import encode_packet
+from buddy_terminal_codec import decode_packet, encode_packet
+from frame_sheets import raster_sheet
 
 
 STATES = ("ok", "work", "done", "error", "update", "noConfig")
@@ -69,18 +73,8 @@ def main():
         # Keep the clip duration and its first pose while halving the data budget.
         encoded = [encode_packet(source, width=MAIN_SOURCE_WIDTH, height=MAIN_SOURCE_HEIGHT, gamma=MAIN_GAMMA, crop=MAIN_CROP)
                    for source in sources[::SOURCE_FPS // MAIN_FPS]]
-        module = "export default " + json.dumps(encoded, separators=(",", ":")) + ";\n"
-        if len(module.encode("utf-8")) > 1_048_576:
-            raise ValueError(f"Terminal frame module too large: {state}")
-        (args.output / f"{state}.ts").write_text(module)
+        (args.output / f"{state}.png").write_bytes(raster_sheet([decode_packet(packet)[2] for packet in encoded], 1000 // MAIN_FPS))
         print(f"{state}: {len(encoded)} frames, {MAIN_COLUMNS}x{MAIN_ROWS} cells, {MAIN_FPS} FPS")
-    settings = (f"export const COLUMNS = {MAIN_COLUMNS};\n"
-                f"export const ROWS = {MAIN_ROWS};\n"
-                f"export const SOURCE_WIDTH = {MAIN_SOURCE_WIDTH};\n"
-                f"export const SOURCE_HEIGHT = {MAIN_SOURCE_HEIGHT};\n"
-                f"export const FPS = {MAIN_FPS};\n"
-                f"export const FRAME_MS = {1000 // MAIN_FPS};\n")
-    (args.output / "settings.ts").write_text(settings)
 
 
 if __name__ == "__main__":

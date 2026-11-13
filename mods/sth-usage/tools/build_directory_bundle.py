@@ -6,8 +6,9 @@ Usage:
       --include-tests
 
 Requires Pillow and NumPy. Stage or commit all runtime files before building:
-the allowlist copies tracked files from hooks/, ui/, and types/, required listing
-documents, the manifest, and optionally tests/. Untracked media and experiments
+the allowlist copies tracked files from hooks/, ui/, and types/, the frame sheets in
+assets/desktop/ and assets/terminal/, required listing documents, the manifest, and
+optionally tests/. Untracked media and experiments
 are never copied. Source PNG sequences remain in the source checkout. Lossless
 RGBA keyframes/deltas are verified against an immutable hosted asset release.
 The default bundle includes the pinned manifest and exact initial PNG poses;
@@ -58,11 +59,14 @@ MAX_SCRIPT_BYTES = 1024 * 1024
 SCRIPT_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".tsx", ".py", ".sh"}
 IMAGE_FORMATS = {".png": "PNG", ".webp": "WEBP", ".jpg": "JPEG", ".jpeg": "JPEG", ".gif": "GIF"}
 RUNTIME_DIRECTORIES = ("hooks", "ui", "types")
+# One image file per animation; hooks/frame-sheets.ts reads them (see frame_sheets.py).
+FRAME_SHEETS = tuple(f"assets/{folder}/{name}.{suffix}" for folder, suffix in (("desktop", "webp"), ("terminal", "png"))
+                     for name in EXPECTED_SEQUENCES)
 REQUIRED_FILES = ("README.md", "PRIVACY.md", "LICENSE", ".claude-plugin/plugin.json")
 ASSET_SOURCE_FILE = "tools/buddy-assets-source.json"
 REVIEW_TOOLS = (
     "build_directory_bundle.py", "stage_directory_release.py", "test_directory_packaging.py",
-    "buddy-assets-source.json", "encode_buddy_frames.py", "encode_buddy_terminal.py",
+    "buddy-assets-source.json", "frame_sheets.py", "fika-frames.json", "encode_buddy_frames.py", "encode_buddy_terminal.py",
     "encode_fika_frames.py", "buddy_terminal_codec.py", "render_buddy_frames.py",
     "render_fika_transparent.py", "fika_props.py", "fika_table.py", "check_buddy_assets.py",
     "audit_buddy_media.py", "README.md",
@@ -128,7 +132,10 @@ def externalize_assets(source: Path, data_root: Path, index: dict, config: dict)
         shutil.copyfile(original, target)
         bootstrap[name] = digest(target.read_bytes())
     shutil.rmtree(data_root)
-    write_json(data_root / "remote.json", {**index, "remote": {"baseUrl": config["baseUrl"], "id": config["id"]}})
+    # Indented: the directory treats one 16 KB line as an opaque asset. Readers re-canonicalize it.
+    remote = {**index, "remote": {"baseUrl": config["baseUrl"], "id": config["id"]}}
+    data_root.mkdir(parents=True)
+    (data_root / "remote.json").write_text(json.dumps(remote, ensure_ascii=True, sort_keys=True, indent=1) + "\n")
     return {"baseUrl": config["baseUrl"], "id": config["id"], "commit": config["commit"],
             "indexSha256": config["id"], "packetCount": len(expected) - 1,
             "packetBytes": sum(chunk["bytes"] for info in index["sequences"].values() for chunk in info["chunks"]),
@@ -241,7 +248,7 @@ def copy_runtime(source: Path, target: Path, tracked: list[Path], include_tests:
         raise FileNotFoundError("A tracked THIRD_PARTY notices file is required for bundled runtime dependencies")
     directories = (*RUNTIME_DIRECTORIES, *(("tests",) if include_tests else ()))
     selected = [path for path in tracked if path.parts[0] in directories
-                or path.as_posix() in (*REQUIRED_FILES, "tsconfig.json") or path in notices
+                or path.as_posix() in (*REQUIRED_FILES, "tsconfig.json", *FRAME_SHEETS) or path in notices
                 or path in listing_assets]
     if not any(path.parts[:2] == ("hooks", "vendor") for path in selected):
         raise FileNotFoundError("Tracked hooks/vendor/ decoder dependency is missing")
@@ -321,7 +328,7 @@ def copy_review_sources(source: Path, plugin: Path, repo: Path, tracked: list[Pa
     write_json(plugin / "review-source/source-manifest.json", manifest)
     (plugin / "review-source/README.md").write_text(
         "# Submitted build sources\n\n"
-        "The plugin ships its readable hooks, UI, types and vendored decoder unchanged. "
+        "The plugin ships its readable hooks, UI, types, vendored decoder and frame sheets unchanged. "
         "This folder also includes the exact packaging/encoding scripts, upstream decoder "
         "input and original Buddy Blender model. None of these review files is registered "
         "as a runtime hook. See `fflate/README.md` to reproduce the decoder byte for byte.\n\n"

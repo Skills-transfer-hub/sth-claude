@@ -46,7 +46,8 @@ jobs:
           DISABLE_AUTOUPDATER: '1'
           DISABLE_TELEMETRY: '1'
         run: |
-          claude plugin validate "$RUNNER_TEMP/buddy-bundle/sth-usage"
+          # 2.1.322 finds types/index.d.ts without a manifest "types" field, which the directory rejects; 2.1.289 does not.
+          npx -y @anthropic-ai/claude-code@2.1.322 plugin validate "$RUNNER_TEMP/buddy-bundle/sth-usage"
           claude plugin test "$RUNNER_TEMP/buddy-bundle/sth-usage"
       - name: Stage complete repository archive and enforce size limit
         run: |

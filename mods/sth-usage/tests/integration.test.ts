@@ -3,8 +3,10 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import { detectStack, EMPTY_PROJECT } from '../hooks/project'
 import { terminalRaster } from '../hooks/terminal-raster'
 import type { ActivityView, ProjectView, SkillsView } from '../types'
-import terminalUpdate from '../ui/terminal-frames/update'
-import desktopUpdate from '../ui/frames/update'
+import { desktopFixture, rasterFixture, sheetFixture } from './frame-fixtures'
+
+const terminalUpdate = rasterFixture('update')
+const desktopUpdate = desktopFixture('update')
 
 const DOCS = 'https://github.com/Skills-transfer-hub/sth-releases/blob/main/README.md'
 const PACKAGE = JSON.stringify({
@@ -104,6 +106,8 @@ function environment(on: On, initial: Record<string, unknown> = {}, missingSth =
   on('env.get', { name: 'TMUX' }, () => ({ value: 'integration-terminal' }))
   on('fs.list', () => ({ value: [] }))
   on('fs.read', (_, e) => {
+    const sheet = sheetFixture(e.path)
+    if (sheet !== undefined && e.as === 'bytes') return { value: { base64: sheet } }
     if (e.path === '/project/package.json') return { value: PACKAGE }
     if (e.path === '/project/.sth/project.json') return { value: JSON.stringify({ providers: [{ id: 'github' }] }) }
     throw new Error('ENOENT: no such file')
@@ -216,7 +220,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
       if (surface === 'terminal') {
         const drawing = await ui.find({ type: 'Raster' })
         expect(String(drawing?.key).startsWith('buddy-raster-update-')).toBe(true)
-        expect(terminalUpdate.some(packet => terminalRaster(packet, drawing!.props.columns as number, drawing!.props.rows as number) === drawing?.props.cells)).toBe(true)
+        expect(terminalUpdate.some(pose => terminalRaster(pose, drawing!.props.columns as number, drawing!.props.rows as number) === drawing?.props.cells)).toBe(true)
       } else {
         const client = await ui.find({ key: 'buddy-update', type: 'Client' })
         expect(client?.props.props).toMatchObject({ state: 'update', caption: 'Buddy is waiting for your permission (Bash)' })

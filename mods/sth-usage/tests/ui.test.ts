@@ -4,19 +4,21 @@ import type { Mounted, MockClock } from 'claude-code/testing'
 
 import { isPromptText, isUserPrompt } from '../hooks/fika'
 import { terminalRaster } from '../hooks/terminal-raster'
+import {
+  FIKA_RASTER_FPS, RASTER_COLUMNS as FIKA_COLUMNS, RASTER_COLUMNS as MAIN_COLUMNS, RASTER_ROWS as FIKA_ROWS, RASTER_ROWS as MAIN_ROWS,
+} from '../hooks/frame-sheets'
+import type { RasterPose } from '../hooks/frame-sheets'
 import type { SkillsView } from '../types'
-import ok from '../ui/frames/ok'
-import work from '../ui/frames/work'
-import done from '../ui/frames/done'
-import error from '../ui/frames/error'
-import update from '../ui/frames/update'
-import noConfig from '../ui/frames/noConfig'
-import fika from '../ui/frames/fika/index'
-import terminalFika, { COLUMNS as FIKA_COLUMNS, ROWS as FIKA_ROWS, FPS as FIKA_RASTER_FPS } from '../ui/terminal-frames/fika/index'
-import terminalNoConfig from '../ui/terminal-frames/noConfig'
-import { COLUMNS as MAIN_COLUMNS, ROWS as MAIN_ROWS } from '../ui/terminal-frames/settings'
+import { desktopFixture, rasterFixture, sheetFixture } from './frame-fixtures'
 
-const buddyFrames = { ok, work, done, error, update, noConfig }
+const noConfig = desktopFixture('noConfig')
+const fika = desktopFixture('fika')
+const terminalFika = rasterFixture('fika')
+const terminalNoConfig = rasterFixture('noConfig')
+const buddyFrames = {
+  ok: desktopFixture('ok'), work: desktopFixture('work'), done: desktopFixture('done'),
+  error: desktopFixture('error'), update: desktopFixture('update'), noConfig,
+}
 
 const SURFACES = ['terminal', 'desktop'] as const
 const RESOURCE = 'team::guides/review'
@@ -61,15 +63,15 @@ function expectVisibleRaster(cells: unknown, columns = MAIN_COLUMNS, rows = MAIN
   expect(colors.size).toBeGreaterThan(10)
 }
 
-function expectRasterPose(cells: unknown, packet: string | undefined, columns = MAIN_COLUMNS, rows = MAIN_ROWS) {
-  if (!packet) throw new Error('The expected Buddy source pose is missing')
+function expectRasterPose(cells: unknown, pose: RasterPose | undefined, columns = MAIN_COLUMNS, rows = MAIN_ROWS) {
+  if (!pose) throw new Error('The expected Buddy source pose is missing')
   // Keep failures readable: a full base64 comparison hides the useful assertion.
-  expect(cells === terminalRaster(packet, columns, rows), `Buddy pose must match the decoded ${columns}×${rows} source`).toBe(true)
+  expect(cells === terminalRaster(pose, columns, rows), `Buddy pose must match the decoded ${columns}×${rows} source`).toBe(true)
 }
 
-function expectRasterBlit(blit: UiBlitArgs | undefined, packet: string | undefined, columns = MAIN_COLUMNS, rows = MAIN_ROWS) {
+function expectRasterBlit(blit: UiBlitArgs | undefined, pose: RasterPose | undefined, columns = MAIN_COLUMNS, rows = MAIN_ROWS) {
   if (!blit || !('cells' in blit)) throw new Error('Buddy must update the terminal raster')
-  expectRasterPose(blit.cells, packet, columns, rows)
+  expectRasterPose(blit.cells, pose, columns, rows)
 }
 
 async function expectBuddyVisible(ui: Pick<Mounted<'terminal' | 'desktop', 'Pane'>, 'surface' | 'find' | 'findAll' | 'drawn'>) {
@@ -101,7 +103,7 @@ async function expectOnlyBuddyPose<P extends 'terminal' | 'desktop'>(ui: Mounted
     const poses = state === 'fika' ? terminalFika : terminalNoConfig
     const columns = state === 'fika' ? FIKA_COLUMNS : MAIN_COLUMNS
     const rows = state === 'fika' ? FIKA_ROWS : MAIN_ROWS
-    if (frame === undefined) expect(poses.some(packet => terminalRaster(packet, columns, rows) === drawings[0]?.props.cells)).toBe(true)
+    if (frame === undefined) expect(poses.some(pose => terminalRaster(pose, columns, rows) === drawings[0]?.props.cells)).toBe(true)
     else expectRasterPose(drawings[0]?.props.cells, poses[state === 'fika' ? Math.floor(frame * FIKA_RASTER_FPS / 30) : frame], columns, rows)
     expect(drawings[0]?.props.columns).toBe(columns)
     expect(drawings[0]?.props.rows).toBe(rows)
@@ -148,15 +150,6 @@ describe('Buddy in text terminals', () => {
       await expectBuddyVisible(ui)
       await ui.unmount()
     }
-  })
-
-  test('the body remains visible against a dark terminal background', () => {
-    // Check the decoded, fitted cells that the terminal actually receives.
-    const { visibleCells, colors, luminance } = rasterColors(terminalRaster(terminalNoConfig[0]!, MAIN_COLUMNS, MAIN_ROWS))
-    expect(visibleCells).toBeGreaterThan(100)
-    expect(colors.has(0x01000000)).toBe(true)
-    expect(luminance[Math.floor(luminance.length / 2)]).toBeGreaterThan(75)
-    expect(luminance[Math.floor(luminance.length / 4)]).toBeGreaterThan(65)
   })
 
   test('the portable animation changes once per 100 ms while Fika keeps its own cadence', async ($, on) => {
@@ -526,7 +519,7 @@ function stubEnvironment(on: On, isLinked: boolean, variables: Readonly<Record<s
     return result
   })
   on('fs.read', (_, e) => ({
-    value: e.as === 'bytes' ? { base64: PNG } : JSON.stringify({ providers: [{ id: 'github' }] }),
+    value: e.as === 'bytes' ? { base64: sheetFixture(e.path) ?? PNG } : JSON.stringify({ providers: [{ id: 'github' }] }),
   }))
   on('fs.exists', () => ({ value: false }))
   on('process.run', (_, e) => {

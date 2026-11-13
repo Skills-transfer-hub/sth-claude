@@ -15,7 +15,8 @@ import subprocess
 import zipfile
 from pathlib import Path
 
-from build_directory_bundle import REVIEW_TOOLS, REVIEW_VENDOR, validate_reviewable_files
+from build_directory_bundle import EXPECTED_SEQUENCES, FRAME_SHEETS, REVIEW_TOOLS, REVIEW_VENDOR, validate_reviewable_files
+from frame_sheets import raster_frames, webp_frames
 
 MAX_ARCHIVE_BYTES = 48 * 1024 * 1024  # Headroom below the portal's 50 MiB ceiling.
 REPOSITORY = "Skills-transfer-hub/sth-claude"
@@ -85,6 +86,26 @@ def validate_asset_tree(source: Path, bundle: Path, receipt: dict) -> set[Path]:
                 raise SystemExit(f"Embedded Buddy packet differs from its manifest: {name}")
             expected.add(path.relative_to(bundle))
     return expected
+
+
+def validate_frame_sheets(source: Path, bundle: Path) -> set[Path]:
+    """Ship each animation's sheet exactly as committed, complete and readable as the hooks module reads it."""
+    paths = set()
+    for name in FRAME_SHEETS:
+        relative = Path(name)
+        shipped, original = bundle / relative, source / "mods/sth-usage" / relative
+        if not shipped.is_file() or not original.is_file() or shipped.read_bytes() != original.read_bytes():
+            raise SystemExit(f"Frame sheet differs from the source commit: {relative}")
+        try:
+            poses = webp_frames(shipped.read_bytes()) if relative.suffix == ".webp" else raster_frames(shipped.read_bytes())
+        except ValueError as error:
+            raise SystemExit(f"Frame sheet cannot be read: {relative}: {error}") from error
+        # Terminal rasters keep every other pose: Buddy at 10 FPS, Fika at 15 FPS.
+        count = EXPECTED_SEQUENCES[relative.stem][0] // (1 if relative.suffix == ".webp" else 2)
+        if len(poses) != count:
+            raise SystemExit(f"Frame sheet {relative} holds {len(poses)} poses; expected {count}")
+        paths.add(relative)
+    return paths
 
 
 def validate_review_sources(source: Path, bundle: Path, receipt: dict) -> None:
@@ -203,7 +224,7 @@ def main() -> None:
     receipt = json.loads((bundle.parent / "receipt.json").read_text())
     if receipt.get("format") != "sth-rgba-delta-v1" or receipt.get("codecIncluded") is not True or receipt.get("pixelVerification") != "passed":
         raise SystemExit("Builder receipt must confirm codec inclusion and exact pixel verification")
-    asset_paths = validate_asset_tree(source, bundle, receipt)
+    asset_paths = validate_asset_tree(source, bundle, receipt) | validate_frame_sheets(source, bundle)
     validate_review_sources(source, bundle, receipt)
     validate_reviewable_files(bundle)
     icon_name = manifest.get("icon")
