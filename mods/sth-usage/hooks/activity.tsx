@@ -440,6 +440,8 @@ export function registerActivity(on: On): void {
   })
 
   on('turn.start', { turnId: /^/ }, async ($, e, next) => {
+    // Engines after 2.1.289 raise turn.start for a subagent's run too; only the main loop's starts a turn here.
+    if (e.agentId !== undefined) return next(e)
     turnId = e.turnId
     resetPermissions()
     await quietly($, async () => {
