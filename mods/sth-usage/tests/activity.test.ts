@@ -93,10 +93,15 @@ function environment(on: On, files: Record<string, string> = {}, links: { parent
   on('prompt.submit', (_, e) => ({ text: e.text }))
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_, e) => ({ text: e.answer }))
-  on('classic.PreToolUse', () => ({}))
+  // Kits after 2.1.289 make $.tool.call raise PreToolUse, then tool.check for
+  // that call, and refuse an ask nobody answers. Allow that one check so the
+  // call reaches the test's hooks, which raise checks and requests themselves.
+  const raisedByCall = new Set<string>()
+  on('classic.PreToolUse', (_, e) => { raisedByCall.add(e.tool_use_id); return {} })
   on('classic.PermissionRequest', () => ({}))
   on('classic.Notification', () => ({}))
-  on('tool.check', () => ({ decision: 'ask', reason: 'Confirm before execution' }))
+  on('tool.check', (_, e) => e.tool_use_id !== undefined && raisedByCall.delete(e.tool_use_id)
+    ? { decision: 'allow' } : { decision: 'ask', reason: 'Confirm before execution' })
   on('process.run', (_, e) => {
     processes.push([...e.argv])
     processRoots.push(e.init?.cwd)
@@ -369,7 +374,8 @@ describe('Activity observes the existing chain', () => {
     await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
     await $.turn.start({ text: 'Observe immutable input', turnId: 'immutable-input' })
     const pending = await calls.start('immutable', input.command, { input })
-    expect(checkedInputs).toEqual([input])
+    // Newer kits check the call's own input first; the last check is the final input.
+    expect(checkedInputs.at(-1)).toEqual(input)
     expect(JSON.stringify(input)).toBe(original)
     expect(Object.isFrozen(input)).toBe(true)
     expect(Object.isFrozen(input.details.values)).toBe(true)
@@ -382,7 +388,7 @@ describe('Activity observes the existing chain', () => {
     await pending.result
     expect(env.view()).toMatchObject({ phase: 'working', waitingTool: null })
     expect(JSON.stringify(input)).toBe(original)
-    expect(JSON.stringify(checkedInputs[0])).toBe(original)
+    expect(JSON.stringify(checkedInputs.at(-1))).toBe(original)
     expect(calls.executions()).toBe(1)
     expect(env.logs.some(log => log.includes('summary unavailable'))).toBe(false)
   })
@@ -608,6 +614,40 @@ describe('Activity observes the existing chain', () => {
       expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'Bash' })
     })
   }
+
+  test('a subagent run keeps the main turn, its files and its waiting state', async ($, on) => {
+    const env = environment(on)
+    const calls = controlledCalls($, on)
+    on('tool.call', { tool: 'Write' }, (_, e) => ({ result: {
+      type: 'create', filePath: e.file_path, content: e.content, originalFile: null, structuredPatch: PATCH,
+    } }))
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Main work', turnId: 'main' })
+    await $.tool.call({ tool: 'Write', tool_use_id: 'main-write', file_path: ROOT + '/main.ts', content: 'main' })
+    const pending = await calls.start('main-call', 'needs permission')
+    await calls.request('needs permission')
+    // After 2.1.289 a subagent's run raises turn.start as well as turn.complete.
+    await $.turn.start({ text: 'Delegated work', turnId: 'agent-turn', agentId: 'worker' })
+    await $.turn.complete({ answer: 'report', durationMs: 1, turnId: 'agent-turn', agentId: 'worker', isAborted: false, reason: 'answer' })
+    expect(env.view()).toMatchObject({ phase: 'permission', waitingTool: 'Bash', files: ['main.ts'] })
+    pending.finish()
+    await pending.result
+    await $.turn.complete({ answer: '', durationMs: 1, turnId: 'main', isAborted: false, reason: 'answer' })
+    expect(env.view()).toMatchObject({ phase: 'complete', waitingTool: null })
+    expect(env.view().last?.files).toEqual(['main.ts'])
+    expect(env.view().resume?.files).toEqual(['main.ts'])
+  })
+
+  test('a subagent run after the main turn leaves its summary and Buddy idle', async ($, on) => {
+    const env = environment(on)
+    await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'Main work', turnId: 'main' })
+    await $.turn.complete({ answer: '', durationMs: 1, turnId: 'main', isAborted: false, reason: 'answer' })
+    await $.turn.start({ text: 'Background work', turnId: 'agent-turn', agentId: 'worker' })
+    expect(env.values.get('isWorking')).toBe(false)
+    expect(env.view()).toMatchObject({ phase: 'complete' })
+    expect(env.view().last).not.toBeNull()
+  })
 
   test('only a long main turn emits one toast', async ($, on) => {
     const env = environment(on)
