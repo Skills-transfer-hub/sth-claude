@@ -168,6 +168,19 @@ class ReleaseBoundaryTests(unittest.TestCase):
             self.assertEqual((self.source / name).read_bytes(), contents)
             self.assertEqual((self.bundle / name).read_bytes(), contents)
 
+    def test_directory_package_keeps_only_manifest_artwork_license_and_privacy(self) -> None:
+        build.copy_runtime(self.source, self.bundle, self.tracked, include_tests=True)
+        assets = {Path("assets/icon.png"), Path("assets/desktop/ok.webp"), Path("assets/buddy-codec/remote.json")}
+        for relative in assets:
+            (self.bundle / relative).parent.mkdir(parents=True, exist_ok=True)
+            (self.bundle / relative).write_bytes(b"artwork")
+        files = stage.release_files(self.bundle, assets, None)
+        kept = {relative for _, relative in stage.artwork_only(files, Path("assets/icon.png"))}
+        self.assertEqual(kept, {Path(".claude-plugin/plugin.json"), Path("LICENSE"), Path("PRIVACY.md"),
+                                Path("assets/icon.png"), Path("assets/desktop/ok.webp")})
+        with self.assertRaisesRegex(SystemExit, "PNG or WebP"):
+            stage.artwork_only(files, Path("hooks/register.tsx"))
+
     def test_staging_rejects_a_bundle_built_without_regression_tests(self) -> None:
         build.copy_runtime(self.source, self.bundle, self.tracked, include_tests=False)
         self.assertFalse((self.bundle / "tests").exists())
