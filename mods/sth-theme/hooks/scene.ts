@@ -15,7 +15,8 @@
  *
  * The app draws a backdrop as a still and plays no animation in it, so the scene is a function of the
  * time `t` in seconds (motion.ts) that the mod draws once, at one instant. Only the light and dark
- * modes are left to the styles inside.
+ * modes are left to the styles inside, and a wash of the window's own color that covers the scene
+ * when the system asks for more contrast.
  *
  * The root has a viewBox of 1600 x 900 and is sliced to fill any screen. The nook sits in the right
  * of it, where the conversation leaves a margin; a portrait box moves it to the middle.
@@ -30,7 +31,7 @@ const DAY = {
   cable: '#55534e', shade: '#d9d4c8', bulb: '#f1ece0', lamp: '#ffe2b0', la: '0', ca: '0',
   leaf1: '#7ca58b', leaf2: '#5f8a72', pot: '#c9b79c', rug: '#d6d0c3', rug2: '#bdb6a5',
   box: '#c8a46c', box2: '#dcbc88', tape: '#ece1c6', wd1: '#dccdb5', wd2: '#c9b99f', wd3: '#cdbca3',
-  mote: '#fff', sh: '.2', vig: '.06',
+  mote: '#fff', sh: '.2', vig: '.06', calm: '#f8f8f5',
 }
 const NIGHT = {
   w0: '#1d1c21', w1: '#131216', f0: '#2c251e', f1: '#1b1712', plank: '#4a3f33', base: '#27252b',
@@ -38,18 +39,20 @@ const NIGHT = {
   cable: '#6c6962', shade: '#ecd9ae', bulb: '#fff1cf', lamp: '#ffc47a', la: '.6', ca: '.2',
   leaf1: '#4f7d66', leaf2: '#3c6350', pot: '#4a3f35', rug: '#2a2c2a', rug2: '#3a3d39',
   box: '#8d6e42', box2: '#a07f50', tape: '#bdae8f', wd1: '#cdbb9c', wd2: '#b3a183', wd3: '#b9a78a',
-  mote: '#ffd9a0', sh: '.4', vig: '.5',
+  mote: '#ffd9a0', sh: '.4', vig: '.5', calm: '#0f0f11',
 }
 const vars = (p: Record<string, string>) =>
   Object.entries(p)
     .map(([k, v]) => `--${k}:${v}`)
     .join(';')
 
-// What stays in the styles: the two modes, and where the nook sits.
+// What stays in the styles: the two modes, the wash for when the system asks for more contrast (`--calm-o`),
+// and where the nook sits.
 const CSS = `
-:root{${vars(DAY)}}
+:root{${vars(DAY)};--calm-o:0}
 .night{display:none}
 @media (prefers-color-scheme:dark){:root{${vars(NIGHT)}}.day{display:none}.night{display:inline}}
+@media (prefers-contrast:more){:root{--calm-o:.6}}
 .nook{transform:translate(80px,0) scale(.9);transform-origin:1180px 760px}
 @media (max-aspect-ratio:1/1){.nook{transform:translate(-420px,0) scale(.8)}}`
 
@@ -232,5 +235,6 @@ ${NAP}
 ${workers(t)}
 </g>
 <rect width="1600" height="900" fill="url(#vig)" style="opacity:var(--vig)"/>
+<rect width="1600" height="900" fill="var(--calm)" style="opacity:var(--calm-o)"/>
 </svg>`
 }

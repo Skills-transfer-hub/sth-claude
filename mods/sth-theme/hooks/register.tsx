@@ -6,7 +6,8 @@ import { scene } from './scene'
 const SCENE = 'fika'
 
 // Buddy by STH: chalk by day, graphite by night, and the terminal's one emerald. The grays are
-// the design system's neutrals, tinted a few points toward Buddy's own pets. The other roles
+// the design system's neutrals, tinted a few points toward Buddy's own pets, but for the muted text,
+// a notch stronger so that it stays readable over the scene. The other roles
 // only keep code readable; the design system has no accent besides the emerald.
 // The backdrop is Buddy's fika nook (scene.ts), morning in light mode and evening in dark mode.
 const { theme } = makeColors({
@@ -20,7 +21,7 @@ const { theme } = makeColors({
         'surface-2': '#ffffff',
         'text-primary': '#0a0a0a',
         'text-secondary': '#47474a',
-        'text-muted': '#66666a',
+        'text-muted': '#525256',
       },
     },
   },
@@ -33,19 +34,22 @@ const { theme } = makeColors({
         'surface-3': '#19191c',
         'text-primary': '#ecebe4',
         'text-secondary': '#c4c3bc',
-        'text-muted': '#9a9a96',
+        'text-muted': '#b2b2ae',
       },
     },
   },
 })
 
 // The desktop app frosts its panels over the backdrop, 16 points of blur under a tint 60% opaque by
-// default, which turns Buddy into a smear. No blur and a light tint let him show through the panels.
-const GLASS = { blur: 0, opacity: 0.3 }
+// default, which turns Buddy into a smear. No blur lets him show through the panels. With the muted grays
+// above, a 45% tint puts about 95% of the chat column at 4.5:1 for its muted text over the still scene (a
+// 30% tint left 70% of it in light mode). Measured on the scene drawn alone, not in the app.
+const GLASS = { blur: 0, opacity: 0.45 }
 
 const LOOK: ThemeSetArgs = { colors: theme, backdrop: { scene: SCENE, glass: GLASS } }
 
-const ALT = 'Buddy prend sa pause fika dans un coin cosy : un café, une kanelbulle, une lampe, une fenêtre sur le jour ou sur la nuit.'
+// The scene is decoration: a screen reader has nothing to announce.
+const ALT = ''
 
 // The app draws a backdrop as a still: no CSS or SMIL animation plays in an SVG, no image is drawn, and no
 // `Client` is mounted there (three of them in the backdrop never posted, nor failed), while redrawing the
