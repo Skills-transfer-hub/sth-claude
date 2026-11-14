@@ -19,7 +19,7 @@ The mod reads session and project information and saves a local Resume summary. 
 Requires Claude Code **2.1.287 or later** and Git. Run in your terminal:
 
 ```sh
-claude plugin marketplace add https://github.com/Skills-transfer-hub/sth-claude.git#codex/directory-release
+claude plugin marketplace add https://github.com/Skills-transfer-hub/sth-claude.git
 claude plugin install sth-usage@sth --scope user
 ```
 
@@ -221,7 +221,7 @@ The publisher updates only `codex/directory-release`, which contains the compact
 
 The default build verifies all 574 original frames, then references the immutable asset snapshot recorded in `tools/buddy-assets-source.json`. It fails if the generated asset hashes differ from that snapshot. Use `--embed-assets` for a fully self-contained build; changed artwork must be published as a new data snapshot and the pinned source updated before shipping another lightweight release. Ordinary code updates reuse the existing verified cache.
 
-Configure the Claude Directory source to follow `codex/directory-release` so future update checks see compact releases. Directory validation and review remain separate from GitHub publication. Marketplace users can install from `https://github.com/Skills-transfer-hub/sth-claude.git#codex/directory-release`; they enable automatic updates separately in `/plugin` → Marketplaces → `sth`.
+Configure the Claude Directory source to follow `codex/directory-release` so future update checks see compact releases. Directory validation and review remain separate from GitHub publication. Marketplace users can install from `https://github.com/Skills-transfer-hub/sth-claude.git`; they enable automatic updates separately in `/plugin` → Marketplaces → `sth`.
 
 ## Rebuild the preview
 
