@@ -1,6 +1,6 @@
 # Buddy theme · Claude
 
-Version **0.1.2**. Buddy's colors for the Claude app, and Buddy's fika nook behind the conversation: Buddy at his bench with a coffee and a kanelbulle, little Buddies at work, asleep or peeking in through the window. Morning in light mode, evening in dark mode.
+Version **0.1.3**. Buddy's colors for the Claude app, and Buddy's fika nook behind the conversation: Buddy at his bench with a coffee and a kanelbulle, little Buddies at work, asleep or peeking in through the window. Morning in light mode, evening in dark mode.
 
 ## Install
 
@@ -33,7 +33,7 @@ To uninstall, run `claude plugin uninstall sth-theme@sth`.
 ## Accessibility
 
 - Over the still scene, about 95% of the chat column reaches 4.5:1 (WCAG AA) for the muted text, and more for the other text. That is measured on the scene drawn alone under the 45% tint, not in the app. The muted grays are a notch stronger than the design system's for that.
-- The scene is decoration: it has no text alternative for a screen reader to announce.
+- The scene has a short text alternative, "Buddy's fika nook". It cannot be empty: the desktop app refuses an empty or blank one and then draws no backdrop at all (versions 0.1.1 and 0.1.2 did that).
 - When the system asks for more contrast (`prefers-contrast: more`), a wash of the window's own color covers the scene. In the same measure, every text then reaches 4.5:1.
 
 ## Privacy

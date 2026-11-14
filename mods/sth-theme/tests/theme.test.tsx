@@ -43,8 +43,9 @@ test('both apps draw the same still scene, one SVG within the size limit', async
     // The one instant the still shows, 4 s in.
     expect(source).toBe(scene(4))
     expect(source.length).toBeLessThanOrEqual(131072)
-    // The scene is decoration: a screen reader has nothing to announce.
-    expect(alt.trim()).toBe('')
+    // The desktop app's own schema refuses an empty or blank alt (`alt: string().trim().min(1)`) and then draws no
+    // backdrop at all, though the engine accepts it: 0.1.1 and 0.1.2 shipped '' and showed nothing in the app.
+    expect(alt.trim().length).toBeGreaterThan(0)
     // A wash of the window's own color, there for the system's "more contrast" and invisible otherwise.
     expect(source).toContain('@media (prefers-contrast:more){:root{--calm-o:.6}}')
     expect(source).toContain('fill="var(--calm)" style="opacity:var(--calm-o)"')

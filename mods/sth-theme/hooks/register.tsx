@@ -48,8 +48,10 @@ const GLASS = { blur: 0, opacity: 0.45 }
 
 const LOOK: ThemeSetArgs = { colors: theme, backdrop: { scene: SCENE, glass: GLASS } }
 
-// The scene is decoration: a screen reader has nothing to announce.
-const ALT = ''
+// The desktop app's own schema refuses an empty or blank text alternative (`alt: string().trim().min(1)`) and
+// then draws no backdrop at all, though the engine accepts it: 0.1.1 and 0.1.2 shipped '' and showed nothing.
+// So the scene says what it is, in a few words.
+const ALT = "Buddy's fika nook"
 
 // The app draws a backdrop as a still: no CSS or SMIL animation plays in an SVG, no image is drawn, and no
 // `Client` is mounted there (three of them in the backdrop never posted, nor failed), while redrawing the
