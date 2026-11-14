@@ -8,7 +8,7 @@
   },
   "plugins": [
     {
-      "description": "Buddy: Claude usage, session summaries, project diagnostics and STH catalogs.",
+      "description": "Buddy's artwork only, with no code: it adds no panel, command or hook to Claude Code",
       "name": "sth-usage",
       "source": "./mods/sth-usage"
     }

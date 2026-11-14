@@ -2,7 +2,7 @@
   "name": "sth-usage",
   "displayName": "Buddy by STH",
   "version": "0.3.6",
-  "description": "Buddy: context, session summaries and resume, project diagnostics, STH skills and fika breaks",
+  "description": "Buddy's artwork only, with no code: it adds no panel, command or hook to Claude Code",
   "author": { "name": "Skills Transfer Hub" },
   "homepage": "https://www.skillsth.com/",
   "repository": "https://github.com/Skills-transfer-hub/sth-claude",
