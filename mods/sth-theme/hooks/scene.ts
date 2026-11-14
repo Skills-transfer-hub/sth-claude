@@ -33,13 +33,15 @@ const DAY = {
   box: '#c8a46c', box2: '#dcbc88', tape: '#ece1c6', wd1: '#dccdb5', wd2: '#c9b99f', wd3: '#cdbca3',
   mote: '#fff', sh: '.2', vig: '.06', calm: '#f8f8f5',
 }
+// Evening, lit enough to be seen through the dark panels: the dark tint of a panel sits over the scene, and a
+// near-black room (walls under #1d1c21) came out as nothing at all in the app.
 const NIGHT = {
-  w0: '#1d1c21', w1: '#131216', f0: '#2c251e', f1: '#1b1712', plank: '#4a3f33', base: '#27252b',
-  win: '#2e2c33', sky0: '#07070a', sky1: '#13131a', hill: '#0e0e13', halo: '.05', frame: '#d9d3c6', paper: '#232227',
-  cable: '#6c6962', shade: '#ecd9ae', bulb: '#fff1cf', lamp: '#ffc47a', la: '.6', ca: '.2',
-  leaf1: '#4f7d66', leaf2: '#3c6350', pot: '#4a3f35', rug: '#2a2c2a', rug2: '#3a3d39',
-  box: '#8d6e42', box2: '#a07f50', tape: '#bdae8f', wd1: '#cdbb9c', wd2: '#b3a183', wd3: '#b9a78a',
-  mote: '#ffd9a0', sh: '.4', vig: '.5', calm: '#0f0f11',
+  w0: '#34333f', w1: '#262530', f0: '#44382d', f1: '#30271f', plank: '#6b5b48', base: '#403e4a',
+  win: '#4a4855', sky0: '#0a0b16', sky1: '#1c1d30', hill: '#14151f', halo: '.08', frame: '#e3ddd0', paper: '#33323b',
+  cable: '#8a877e', shade: '#ecd9ae', bulb: '#fff1cf', lamp: '#ffc47a', la: '.75', ca: '.3',
+  leaf1: '#5f9478', leaf2: '#497661', pot: '#6a5a4c', rug: '#3d4040', rug2: '#555955',
+  box: '#9b7a4b', box2: '#b08c5b', tape: '#cbbd9d', wd1: '#d8c6a6', wd2: '#bfad8e', wd3: '#c6b496',
+  mote: '#ffd9a0', sh: '.4', vig: '.3', calm: '#0f0f11',
 }
 const vars = (p: Record<string, string>) =>
   Object.entries(p)
