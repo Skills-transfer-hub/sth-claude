@@ -8,6 +8,11 @@
       "name": "sth-usage",
       "source": "./mods/sth-usage",
       "description": "Buddy: Claude usage, session summaries, project diagnostics and STH catalogs."
+    },
+    {
+      "name": "sth-theme",
+      "source": "./mods/sth-theme",
+      "description": "Buddy theme: STH colors and Buddy's fika nook behind the conversation."
     }
   ],
   "metadata": {

@@ -40,6 +40,19 @@ This uses Claude Code's standard [mod installation](https://code.claude.com/docs
 
 Buddy offers a Fika break before the first prompt. The original nine-second animation and its transparency are preserved. See the [mod guide](mods/sth-usage/README.md) for behavior, data limitations and commands.
 
+## Buddy theme
+
+`sth-theme` dresses the Claude app in Buddy's colors and sets Buddy's fika nook behind the conversation: morning light in light mode, evening in dark mode. The backdrop is a still vector picture; nothing moves.
+
+```sh
+claude plugin marketplace add https://github.com/Skills-transfer-hub/sth-claude.git
+claude plugin install sth-theme@sth --scope user
+```
+
+Skip the first line if you already installed Buddy. Start a new session to see the theme. In Claude Desktop you can also click **+** next to the prompt box, then **Plugins**, **Add marketplace** with `Skills-transfer-hub/sth-claude`, then add the Buddy theme.
+
+Update and uninstall work like Buddy's: `claude plugin update sth-theme@sth` and `claude plugin uninstall sth-theme@sth`. See the [theme guide](mods/sth-theme/README.md).
+
 ## Local development
 
 ```sh
