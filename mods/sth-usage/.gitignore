@@ -1,2 +1,2 @@
-# Local visual verification exports; source assets and the audit tool stay tracked.
-outputs/buddy-audit/
+# Local visual exports (audits, teasers, review proofs); source assets and tools stay tracked.
+outputs/
