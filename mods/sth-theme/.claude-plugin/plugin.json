@@ -1,0 +1,9 @@
+{
+  "name": "sth-theme",
+  "displayName": "Buddy theme by STH",
+  "version": "0.1.0",
+  "description": "Buddy's colors and his fika nook behind the conversation: light in the morning, dark in the evening",
+  "author": { "name": "Skills Transfer Hub" },
+  "homepage": "https://www.skillsth.com/",
+  "repository": "https://github.com/Skills-transfer-hub/sth-claude"
+}
