@@ -204,7 +204,7 @@ Animation frames ship as image files, never as strings in code: `assets/desktop/
 
 ## Publish a compact distribution
 
-Use a checkout of [the source on main](https://github.com/Skills-transfer-hub/sth-claude/tree/main/mods/sth-usage); compact releases retain the allowlisted review sources and omit previews, local exports and test fixtures. Commit the source changes and version bump first. The builder needs Python 3.12, Pillow 12.3.0 and NumPy 2.3.5. From the mod's source directory:
+Use a checkout of [the source on main](https://github.com/Skills-transfer-hub/sth-claude/tree/main/mods/sth-usage). The directory accepts mods, scripts and files other than Markdown, text, JSON, YAML and images only from Verified organizations, so the release keeps only the manifest, artwork, license and privacy notice: the full mod is built, validated and tested, then staging drops its code. Commit the source changes and version bump first. The builder needs Python 3.12, Pillow 12.3.0 and NumPy 2.3.5. From the mod's source directory:
 
 ```sh
 sth_release_dir=$(mktemp -d)
@@ -217,11 +217,11 @@ python3 tools/stage_directory_release.py --source-root "$sth_source_root" --bund
 python3 tools/publish_directory_release.py --source-root "$sth_source_root" --tree "$sth_release_dir/tree" --publish
 ```
 
-The publisher updates only `codex/directory-release`, which contains the compact plugin, marketplace, documentation and licensing notices. It refuses older versions and never force-pushes. Omitting `--publish` performs a dry run. Original artwork and development files remain on `main`.
+The publisher updates only `codex/directory-release`, which contains the artwork-only plugin and its marketplace. Pushing a `plugin.json` change to `main` runs the same steps in `.github/workflows/directory-release.yml`. It refuses older versions and never force-pushes. Omitting `--publish` performs a dry run. Original artwork and development files remain on `main`.
 
 The default build verifies all 574 original frames, then references the immutable asset snapshot recorded in `tools/buddy-assets-source.json`. It fails if the generated asset hashes differ from that snapshot. Use `--embed-assets` for a fully self-contained build; changed artwork must be published as a new data snapshot and the pinned source updated before shipping another lightweight release. Ordinary code updates reuse the existing verified cache.
 
-Configure the Claude Directory source to follow `codex/directory-release` so future update checks see compact releases. Directory validation and review remain separate from GitHub publication. Marketplace users can install from `https://github.com/Skills-transfer-hub/sth-claude.git`; they enable automatic updates separately in `/plugin` → Marketplaces → `sth`.
+Configure the Claude Directory source to follow `codex/directory-release` so future update checks see new artwork-only releases. Directory validation and review remain separate from GitHub publication. Marketplace users can install from `https://github.com/Skills-transfer-hub/sth-claude.git`; they enable automatic updates separately in `/plugin` → Marketplaces → `sth`.
 
 ## Rebuild the preview
 

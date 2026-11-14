@@ -2,7 +2,8 @@
 """Stage the production release after testing its full bundle; never push.
 
 The input must retain its regression tests. The workflow validates and runs them
-before this step; only the published tree and its archive omit tests/ fixtures.
+before this step. The directory accepts code only from Verified organizations, so
+the published tree keeps just the manifest, artwork, license and privacy notice.
 """
 from __future__ import annotations
 
@@ -22,6 +23,8 @@ MAX_ARCHIVE_BYTES = 48 * 1024 * 1024  # Headroom below the portal's 50 MiB ceili
 REPOSITORY = "Skills-transfer-hub/sth-claude"
 RELEASE_BRANCH = "codex/directory-release"
 STATES = {"ok", "work", "done", "error", "update", "noConfig"}
+ARTWORK_ONLY = "Buddy's artwork only, with no code: it adds no panel, command or hook to Claude Code"
+DIRECTORY_IMAGES = {".png", ".webp"}
 
 
 def run_git(root: Path, *args: str) -> str:
@@ -191,6 +194,18 @@ def release_files(bundle: Path, asset_paths: set[Path], icon: Path | None) -> li
     return files
 
 
+def artwork_only(files: list[tuple[Path, Path]], icon: Path | None) -> list[tuple[Path, Path]]:
+    """Keep the manifest, license, privacy notice and images; README.md is rewritten by the caller."""
+    keep = {Path(".claude-plugin/plugin.json"), Path("LICENSE"), Path("PRIVACY.md")}
+    kept = [(path, relative) for path, relative in files
+            if relative in keep or (relative.parts[0] == "assets" and relative.suffix in DIRECTORY_IMAGES)]
+    if icon is not None and icon not in {relative for _, relative in kept}:
+        raise SystemExit(f"Listing icon must be a PNG or WebP image: {icon}")
+    if {relative for _, relative in kept} & keep != keep:
+        raise SystemExit("Artwork package lacks its manifest, license or privacy notice")
+    return kept
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", type=Path, required=True)
@@ -231,7 +246,7 @@ def main() -> None:
     icon = Path(icon_name) if isinstance(icon_name, str) and icon_name and not icon_name.startswith(("https://", "http://")) else None
     if icon is not None and (icon.is_absolute() or ".." in icon.parts or not (bundle / icon).is_file()):
         raise SystemExit("Declared listing icon must be a file inside the bundle")
-    files = release_files(bundle, asset_paths, icon)
+    files = artwork_only(release_files(bundle, asset_paths, icon), icon)
 
     plugin = output / "mods/sth-usage"
     plugin.mkdir(parents=True)
@@ -239,40 +254,39 @@ def main() -> None:
         target = plugin / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target)
+    dump(plugin / ".claude-plugin/plugin.json", {**manifest, "description": ARTWORK_ONLY})
+    (plugin / "README.md").write_text(
+        "# Buddy by STH\n\n"
+        "This package contains Buddy's artwork, its license and the full mod's privacy notice, and no hooks module "
+        "or other code. Installing it adds no panel, command or hook to Claude Code.\n\n"
+        f"Buddy's source and documentation are in [the main repository](https://github.com/{REPOSITORY}). "
+        f"For help, use [GitHub issues](https://github.com/{REPOSITORY}/issues); "
+        "do not include secrets or private project data.\n"
+    )
     (output / ".claude-plugin").mkdir()
     marketplace = json.loads((source / ".claude-plugin/marketplace.json").read_text())
     entries = marketplace.get("plugins", [])
     if marketplace.get("name") != "sth" or len(entries) != 1 or entries[0].get("name") != "sth-usage" or entries[0].get("source") != "./mods/sth-usage":
         raise SystemExit("Marketplace must point at the one compact plugin in this release tree")
+    entries[0]["description"] = ARTWORK_ONLY
     dump(output / ".claude-plugin/marketplace.json", marketplace)
-    hashes = {str(relative): hashlib.sha256(path.read_bytes()).hexdigest() for path, relative in files}
+    hashes = {path.relative_to(plugin).as_posix(): sha256(path.read_bytes())
+              for path in sorted(plugin.rglob("*")) if path.is_file()}
     dump(output / "release.json", {
         "format": 1, "plugin": "sth-usage", "version": version,
         "sourceRepository": REPOSITORY, "sourceCommit": commit,
         "sourceCommitTime": run_git(source, "show", "-s", "--format=%cI", commit),
         "releaseBranch": RELEASE_BRANCH, "pluginFilesSha256": hashes,
-        "assetDelivery": receipt.get("assetDelivery", "embedded"),
-        "hostedAssetSource": receipt.get("hostedAssetSource"),
-        "reviewSources": receipt["reviewSources"],
     })
     (output / "README.md").write_text(
         f"# Buddy by STH · {version}\n\n"
-        "This branch contains the generated distribution, readable runtime source and "
-        "[submitted build inputs](mods/sth-usage/review-source/README.md). The original rendered PNG frames remain in "
-        f"[the exact source commit](https://github.com/{REPOSITORY}/tree/{commit}/mods/sth-usage/assets); "
-        "their SHA-256 hashes are included in the review-source manifest.\n\n"
-        "Requires Claude Code 2.1.287 or later and Git.\n\n"
-        "```sh\n"
-        f"claude plugin marketplace add https://github.com/{REPOSITORY}.git#{RELEASE_BRANCH}\n"
-        "claude plugin install sth-usage@sth --scope user\n"
-        "```\n\n"
-        "Restart Claude Code or run `/reload-plugins`, then `/sth-usage`. "
-        "To receive future versions automatically, enable auto-update for `sth` in `/plugin` → Marketplaces. "
-        "Manual update: `claude plugin update sth-usage@sth`.\n\n"
-        "See [usage](mods/sth-usage/README.md), [privacy](mods/sth-usage/PRIVACY.md), "
-        "[licensing](mods/sth-usage/LICENSE) and the bundled third-party notices.\n\n"
-        f"Built from [{commit[:7]}](https://github.com/{REPOSITORY}/commit/{commit}); "
-        "`release.json` records the source and file hashes.\n"
+        "This branch holds the package submitted to the Claude directory. It contains Buddy's manifest, artwork, "
+        "license and privacy notice, and no hooks module or other code: installing it adds no panel, command or "
+        "hook to Claude Code.\n\n"
+        f"Buddy's source and documentation are on [the main branch](https://github.com/{REPOSITORY}). "
+        "See [privacy](mods/sth-usage/PRIVACY.md) and [licensing](mods/sth-usage/LICENSE).\n\n"
+        f"Built without code from [{commit[:7]}](https://github.com/{REPOSITORY}/commit/{commit}); "
+        "`release.json` records the source and the hashes of the files kept.\n"
     )
     archive_path = output.parent / f"{output.name}.zip"
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
