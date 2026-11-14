@@ -1,6 +1,6 @@
 # Buddy theme · Claude
 
-Version **0.1.1**. Buddy's colors for the Claude app, and Buddy's fika nook behind the conversation: Buddy at his bench with a coffee and a kanelbulle, little Buddies at work, asleep or peeking in through the window. Morning in light mode, evening in dark mode.
+Version **0.1.2**. Buddy's colors for the Claude app, and Buddy's fika nook behind the conversation: Buddy at his bench with a coffee and a kanelbulle, little Buddies at work, asleep or peeking in through the window. Morning in light mode, evening in dark mode.
 
 ## Install
 
